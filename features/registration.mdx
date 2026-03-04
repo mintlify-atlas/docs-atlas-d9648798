@@ -1,0 +1,590 @@
+---
+title: Service Registration
+description: Register healthcare services and manage authorization workflows
+icon: file-medical
+---
+
+## Overview
+
+Service registration (Registración) records healthcare services provided to eligible patients. This operation supports both complete success and partial success scenarios where individual line items may be rejected while the overall transaction is approved.
+
+## Registration Request
+
+### Method Signature
+
+```java
+public Hl7Result<RegistracionResponse> consultarRegistracion(
+    RegistracionRequest request
+)
+```
+
+Source: `Hl7Service.java:39-50`
+
+<Note>
+  Service registration requires an active authenticated session and should follow a successful eligibility check.
+</Note>
+
+## RegistracionRequest Structure
+
+The registration request contains comprehensive service and provider information:
+
+### Operation Data
+
+<ParamField path="modo" type="String" required>
+  Operation mode - single character code
+</ParamField>
+
+<ParamField path="creden" type="String" required>
+  Patient credential number (up to 23 characters)
+</ParamField>
+
+<ParamField path="tipo" type="Integer" required>
+  Transaction type code
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Service date/time in format: `yyyy-MM-dd'T'HH:mm:ss`
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Service date in format: `yyyy-MM-dd`
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing flag:
+  - `Manual.MANUAL` ("0")
+  - `Manual.CAPITADOR` ("C")
+  - `Manual.COMSULTA` ("L")
+</ParamField>
+
+<ParamField path="consulta" type="Manual">
+  Consultation type flag (same enum as manual)
+</ParamField>
+
+### Technical Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number for transaction tracking
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier (up to 20 characters)
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+### Provider Data
+
+<ParamField path="cuit" type="String">
+  Provider CUIT (tax identification) - up to 40 characters
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Provider matriculation origin (up to 10 characters)
+</ParamField>
+
+### Previous Result Data
+
+<ParamField path="autoriz" type="Integer">
+  Previous authorization number (if modifying)
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  Previous rejection code (if re-submitting)
+</ParamField>
+
+### HL7 Extended Data
+
+<ParamField path="icd" type="String">
+  ICD diagnosis code (up to 6 characters)
+</ParamField>
+
+<ParamField path="param1" type="String">
+  Custom parameter 1 (up to 255 characters)
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Custom parameter 2 (up to 255 characters)
+</ParamField>
+
+<ParamField path="param3" type="String">
+  Custom parameter 3 (up to 255 characters)
+</ParamField>
+
+<ParamField path="tipoEfector" type="String">
+  Effector type code (4 characters)
+</ParamField>
+
+<ParamField path="idEfector" type="String">
+  Effector identifier (11 characters)
+</ParamField>
+
+<ParamField path="tipoPrescr" type="String">
+  Prescriber type code (4 characters)
+</ParamField>
+
+<ParamField path="idPrescr" type="String">
+  Prescriber identifier (11 characters)
+</ParamField>
+
+<ParamField path="msgId" type="String">
+  Message ID (20 characters)
+</ParamField>
+
+<ParamField path="ackacept" type="String">
+  Acknowledgment acceptance code (2 characters)
+</ParamField>
+
+<ParamField path="ackackapl" type="String">
+  Acknowledgment application code (2 characters)
+</ParamField>
+
+<ParamField path="tipoMensaje" type="String">
+  Message type (1 character)
+</ParamField>
+
+<ParamField path="powerBuilder" type="Boolean">
+  PowerBuilder compatibility flag
+</ParamField>
+
+### Request Example
+
+```java
+RegistracionRequest request = new RegistracionRequest();
+
+// Operation data
+request.setModo("N");
+request.setCreden("12345678901234567890123");
+request.setTipo(1);
+request.setAlta("2024-03-15T14:30:00");
+request.setFecdif("2024-03-15");
+request.setManual(Manual.MANUAL);
+
+// Technical data
+request.setTicketExt(67890);
+request.setTermId("TERM-001");
+request.setInterNro(100);
+
+// Provider data
+request.setCuit("20123456789");
+request.setOriMatri("PROV-001");
+
+// Extended HL7 data
+request.setIcd("A09.0");
+request.setParam1("Service item 1");
+request.setParam2("Service item 2");
+```
+
+## Registration Response
+
+### Response Structure
+
+The response contains both header (Cabecera) and detail (Detalle) information:
+
+**Source: RegistracionResponse.java**
+
+```java
+public class RegistracionResponse {
+    private RegistracionCabecera cabecera;
+    private RegistracionDetalle[] detalle;
+}
+```
+
+### Cabecera (Header) Fields
+
+<ResponseField name="transac" type="Long">
+  Transaction number assigned by the system
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction creation timestamp
+</ResponseField>
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code. If greater than 0, the entire transaction is rejected.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable rejection reason for header rejection
+</ResponseField>
+
+<ResponseField name="apeNom" type="String">
+  Patient's last name and first name
+</ResponseField>
+
+<ResponseField name="planCodi" type="String">
+  Patient's plan code
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient sex
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Authorized sex value
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Authorized gender value
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Taxable status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+<ResponseField name="icdDeno" type="String">
+  ICD code denomination
+</ResponseField>
+
+<ResponseField name="nomPrestad" type="String">
+  Provider name
+</ResponseField>
+
+<ResponseField name="sucursal" type="String">
+  Branch office identifier
+</ResponseField>
+
+<ResponseField name="autoriz" type="Integer">
+  Authorization number for the transaction
+</ResponseField>
+
+### Detalle (Detail) Fields
+
+<ResponseField name="transac" type="Long">
+  Detail transaction number (may differ from header)
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  Detail item rejection code. If greater than 0, this specific item is rejected.
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Human-readable rejection reason for this specific item
+</ResponseField>
+
+## Validation Logic
+
+The service implements sophisticated validation to handle both complete and partial success scenarios:
+
+**Source: Hl7Service.java:131-169**
+
+```java
+private Hl7Result<RegistracionResponse> validarRegistracion(
+    RegistracionResponse r
+) {
+    if (r == null || r.getCabecera() == null) {
+        return errorRespuestaInvalida();
+    }
+    
+    RegistracionCabecera cab = r.getCabecera();
+    
+    // Check for header rejection
+    if (cab.getRechaCabecera() != null && cab.getRechaCabecera() > 0) {
+        return Hl7Result.rejected(
+            r,
+            Hl7Error.functional(
+                String.valueOf(cab.getRechaCabecera()),
+                cab.getRechaCabeDeno()
+            )
+        );
+    }
+    
+    // Check for detail item rejections
+    List<Hl7ItemError> detalles = new ArrayList<>();
+    
+    if (r.getDetalle() != null) {
+        for (RegistracionDetalle d : r.getDetalle()) {
+            if (d.getRecha() != null && d.getRecha() > 0) {
+                detalles.add(
+                    new Hl7ItemError(
+                        String.valueOf(d.getRecha()),
+                        d.getDenoItem(),
+                        Hl7ItemErrorOrigin.DETALLE
+                    )
+                );
+            }
+        }
+    }
+    
+    return detalles.isEmpty()
+        ? Hl7Result.ok(r)
+        : Hl7Result.partial(r, detalles);
+}
+```
+
+### Validation Flow
+
+1. **Null Check**: Verify response and cabecera exist
+2. **Header Rejection Check**: If `rechaCabecera > 0`, entire transaction is rejected
+3. **Detail Validation**: Iterate through all detail items
+4. **Partial Success**: If header is approved but some details are rejected, return `PARTIAL` status
+5. **Complete Success**: If header and all details are approved, return `OK` status
+
+<Warning>
+  A header rejection (`rechaCabecera > 0`) means the entire transaction failed. Detail items are only validated if the header is approved.
+</Warning>
+
+## Handling Partial Success
+
+Partial success occurs when the transaction is approved at the header level, but individual line items are rejected:
+
+### Hl7ItemError Structure
+
+```java
+public class Hl7ItemError {
+    private final String code;           // Rejection code
+    private final String message;        // Rejection description
+    private final Hl7ItemErrorOrigin origin;  // DETALLE
+}
+```
+
+### Checking for Partial Results
+
+```java
+Hl7Result<RegistracionResponse> result = 
+    hl7Service.consultarRegistracion(request);
+
+if (result.isOk()) {
+    // Complete success - all items approved
+    System.out.println("All items registered successfully");
+    
+} else if (result.isPartial()) {
+    // Partial success - some items rejected
+    RegistracionResponse data = result.getData().get();
+    List<Hl7ItemError> rejectedItems = result.getDetails();
+    
+    System.out.println("Transaction approved: " + data.getCabecera().getTransac());
+    System.out.println("Rejected items: " + rejectedItems.size());
+    
+    for (Hl7ItemError item : rejectedItems) {
+        System.err.println("  Code: " + item.getCode());
+        System.err.println("  Reason: " + item.getMessage());
+    }
+}
+```
+
+<Note>
+  With `PARTIAL` status, the transaction header is successful and has a valid `transac` number. Only specific detail items were rejected.
+</Note>
+
+## Complete Usage Example
+
+```java
+import com.hl7client.model.dto.request.hl7.RegistracionRequest;
+import com.hl7client.model.dto.request.hl7.Manual;
+import com.hl7client.model.dto.response.hl7.RegistracionResponse;
+import com.hl7client.model.dto.response.hl7.RegistracionCabecera;
+import com.hl7client.model.result.Hl7Result;
+import com.hl7client.model.result.Hl7Status;
+import com.hl7client.model.result.Hl7ItemError;
+import com.hl7client.service.Hl7Service;
+
+public class RegistrationExample {
+    
+    private final Hl7Service hl7Service;
+    
+    public void registerService(String credential, String icdCode, 
+                                String serviceDescription) {
+        
+        // Build registration request
+        RegistracionRequest request = new RegistracionRequest();
+        request.setModo("N");
+        request.setCreden(credential);
+        request.setTipo(1);
+        request.setAlta(getCurrentTimestamp());
+        request.setFecdif(getCurrentDate());
+        request.setManual(Manual.MANUAL);
+        request.setTicketExt(generateTicketNumber());
+        request.setTermId(getTerminalId());
+        request.setCuit(getProviderCuit());
+        request.setIcd(icdCode);
+        request.setParam1(serviceDescription);
+        
+        // Execute registration
+        Hl7Result<RegistracionResponse> result = 
+            hl7Service.consultarRegistracion(request);
+        
+        // Handle response
+        if (result.isOk()) {
+            handleCompleteSuccess(result.getData().get());
+            
+        } else if (result.isPartial()) {
+            handlePartialSuccess(
+                result.getData().get(), 
+                result.getDetails()
+            );
+            
+        } else if (result.getStatus() == Hl7Status.REJECTED) {
+            handleCompleteRejection(
+                result.getData().get(),
+                result.getIssue().get()
+            );
+            
+        } else if (result.isError()) {
+            handleTechnicalError(result.getIssue().get());
+        }
+    }
+    
+    private void handleCompleteSuccess(RegistracionResponse response) {
+        RegistracionCabecera cab = response.getCabecera();
+        
+        System.out.println("Registration successful!");
+        System.out.println("Transaction: " + cab.getTransac());
+        System.out.println("Authorization: " + cab.getAutoriz());
+        System.out.println("Patient: " + cab.getApeNom());
+        System.out.println("PMI: " + cab.getPmi());
+        System.out.println("Plan: " + cab.getPlanCodi());
+        
+        // Store transaction number for future reference
+        storeTransactionNumber(cab.getTransac());
+    }
+    
+    private void handlePartialSuccess(
+        RegistracionResponse response,
+        List<Hl7ItemError> rejectedItems
+    ) {
+        RegistracionCabecera cab = response.getCabecera();
+        
+        System.out.println("Registration partially successful");
+        System.out.println("Transaction: " + cab.getTransac());
+        System.out.println("Authorization: " + cab.getAutoriz());
+        
+        System.out.println("\nRejected items: " + rejectedItems.size());
+        for (Hl7ItemError item : rejectedItems) {
+            System.err.println("  Code: " + item.getCode());
+            System.err.println("  Reason: " + item.getMessage());
+        }
+        
+        // Transaction is valid despite rejected items
+        storeTransactionNumber(cab.getTransac());
+        
+        // Notify user about rejected items
+        notifyPartialSuccess(rejectedItems);
+    }
+    
+    private void handleCompleteRejection(
+        RegistracionResponse response,
+        Hl7Error error
+    ) {
+        System.err.println("Registration rejected:");
+        System.err.println("Code: " + error.getCode());
+        System.err.println("Reason: " + error.getMessage());
+        
+        // Header data may still be available
+        if (response.getCabecera() != null) {
+            RegistracionCabecera cab = response.getCabecera();
+            if (cab.getApeNom() != null) {
+                System.err.println("Patient: " + cab.getApeNom());
+            }
+        }
+        
+        // Do not proceed with service provision
+        notifyRejection(error.getMessage());
+    }
+    
+    private void handleTechnicalError(Hl7Error error) {
+        System.err.println("Technical error: " + error.getMessage());
+        System.err.println("Origin: " + error.getOrigin());
+        
+        if (error.isSession()) {
+            promptReauthentication();
+        } else {
+            retryOrEscalate(error);
+        }
+    }
+}
+```
+
+## Best Practices
+
+<Accordion title="Check Eligibility Before Registration">
+  Always verify patient eligibility before attempting registration:
+  
+  ```java
+  // 1. Check eligibility
+  Hl7Result<ElegibilidadResponse> eligibility = 
+      hl7Service.consultarElegibilidad(eligibilityRequest);
+  
+  if (!eligibility.isOk()) {
+      System.err.println("Patient not eligible");
+      return;
+  }
+  
+  // 2. Proceed with registration
+  Hl7Result<RegistracionResponse> registration = 
+      hl7Service.consultarRegistracion(registrationRequest);
+  ```
+</Accordion>
+
+<Accordion title="Handle Partial Success Appropriately">
+  Partial success means the transaction is valid but has item-level issues:
+  
+  ```java
+  if (result.isPartial()) {
+      // Transaction number is valid
+      Long transactionId = result.getData().get()
+          .getCabecera().getTransac();
+      
+      // Store the transaction
+      saveTransaction(transactionId);
+      
+      // But notify about rejected items
+      List<Hl7ItemError> rejected = result.getDetails();
+      notifyUserAboutRejectedItems(rejected);
+  }
+  ```
+</Accordion>
+
+<Accordion title="Store Transaction Numbers">
+  Always store the transaction number for auditing and potential cancellation:
+  
+  ```java
+  if (result.isOk() || result.isPartial()) {
+      Long transac = result.getData().get()
+          .getCabecera().getTransac();
+      
+      // Store for future reference
+      database.saveTransaction(transac, request);
+  }
+  ```
+</Accordion>
+
+<Accordion title="Validate Request Data">
+  Validate request data before submission:
+  
+  ```java
+  private void validateRequest(RegistracionRequest request) {
+      if (request.getCreden() == null || request.getCreden().length() > 23) {
+          throw new IllegalArgumentException("Invalid credential");
+      }
+      
+      if (request.getCuit() == null || request.getCuit().length() > 40) {
+          throw new IllegalArgumentException("Invalid CUIT");
+      }
+      
+      if (request.getIcd() != null && request.getIcd().length() > 6) {
+          throw new IllegalArgumentException("ICD code too long");
+      }
+  }
+  ```
+</Accordion>
+
+## See Also
+
+- [Eligibility Verification](/features/eligibility) - Required first step
+- [Cancellation](/features/cancellation) - Cancel registered transactions
+- [Error Handling Guide](/api/result-types) - Handle all result types

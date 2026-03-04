@@ -1,0 +1,465 @@
+---
+title: Eligibility Verification
+description: Check patient eligibility and coverage details before service provision
+icon: user-check
+---
+
+## Overview
+
+The eligibility verification service validates patient credentials and retrieves coverage information before providing healthcare services. This is typically the first operation performed in the HL7 workflow.
+
+## Eligibility Request
+
+### Method Signature
+
+```java
+public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+    ElegibilidadRequest request
+)
+```
+
+Source: `Hl7Service.java:26-37`
+
+<Note>
+  An authenticated session is required. The method returns an error if `SessionContext.isAuthenticated()` is false.
+</Note>
+
+### ElegibilidadRequest Structure
+
+The request object contains patient and service information:
+
+#### Operation Data
+
+<ParamField path="modo" type="String" required>
+  Operation mode - single character (e.g., "N" for normal)
+</ParamField>
+
+<ParamField path="creden" type="String" required>
+  Patient credential number - 19 characters max
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Service date/time in ISO 8601 format: `yyyy-MM-dd'T'HH:mm:ss`
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Service date in date-only format: `yyyy-MM-dd`
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing flag - enum values:
+  - `Manual.MANUAL` ("0")
+  - `Manual.CAPITADOR` ("C")
+  - `Manual.COMSULTA` ("L")
+</ParamField>
+
+#### Technical Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number for tracking
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier (up to 20 characters)
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+#### Provider Data
+
+<ParamField path="cuit" type="String">
+  Provider CUIT (tax identification number)
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Provider matriculation origin code (up to 10 characters)
+</ParamField>
+
+#### Previous Result Data
+
+<ParamField path="autoriz" type="Integer">
+  Previous authorization number (if applicable)
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  Previous rejection code (if re-submitting)
+</ParamField>
+
+### Request Example
+
+```java
+ElegibilidadRequest request = new ElegibilidadRequest();
+request.setModo("N");
+request.setCreden("1234567890123456789");
+request.setAlta("2024-03-15T10:30:00");
+request.setFecdif("2024-03-15");
+request.setManual(Manual.MANUAL);
+request.setTicketExt(12345);
+request.setTermId("TERMINAL-001");
+request.setCuit("20123456789");
+```
+
+## Eligibility Response
+
+### Response Structure
+
+Successful eligibility checks return an `ElegibilidadResponse`:
+
+<ResponseField name="planCodi" type="String">
+  Patient's plan code
+</ResponseField>
+
+<ResponseField name="apeNom" type="String">
+  Patient's last name and first name
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier (PMI)
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient's age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient's sex/gender
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Authorized sex value
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Authorized gender value
+</ResponseField>
+
+<ResponseField name="transac" type="String">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction creation timestamp
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Taxable status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+<ResponseField name="icdDeno" type="String">
+  ICD code denomination (diagnosis)
+</ResponseField>
+
+### Rejection Fields
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Rejection code for the request header. If greater than 0, the request was rejected.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable rejection reason when `rechaCabecera > 0`
+</ResponseField>
+
+## Validation Logic
+
+The service validates the eligibility response using specific business rules:
+
+**Source: Hl7Service.java:111-129**
+
+```java
+private Hl7Result<ElegibilidadResponse> validarElegibilidad(
+    ElegibilidadResponse r
+) {
+    if (r == null) {
+        return errorRespuestaInvalida();
+    }
+    
+    if (r.getRechaCabecera() != null && r.getRechaCabecera() > 0) {
+        return Hl7Result.rejected(
+            r,
+            Hl7Error.functional(
+                String.valueOf(r.getRechaCabecera()),
+                r.getRechaCabeDeno()
+            )
+        );
+    }
+    
+    return Hl7Result.ok(r);
+}
+```
+
+### Validation Flow
+
+1. **Null Check**: Verify the response object exists
+2. **Rejection Check**: Check if `rechaCabecera > 0`
+   - If rejected: Return `Hl7Result.REJECTED` with error details
+   - If approved: Return `Hl7Result.OK` with response data
+
+<Warning>
+  The `rechaCabecera` field is critical. Any non-zero value indicates the patient is not eligible for service.
+</Warning>
+
+## Hl7Result Response
+
+All HL7 operations return an `Hl7Result<T>` wrapper that encapsulates the outcome:
+
+### Result Status Types
+
+**OK** - Request approved:
+```java
+if (result.isOk()) {
+    ElegibilidadResponse data = result.getData().get();
+    System.out.println("Patient: " + data.getApeNom());
+    System.out.println("Plan: " + data.getPlanCodi());
+}
+```
+
+**REJECTED** - Request functionally rejected:
+```java
+if (result.getStatus() == Hl7Status.REJECTED) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Rejection code: " + error.getCode());
+    System.err.println("Reason: " + error.getMessage());
+    
+    // Response data is still available
+    ElegibilidadResponse data = result.getData().get();
+}
+```
+
+**ERROR** - Technical error:
+```java
+if (result.isError()) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Technical error: " + error.getMessage());
+    System.err.println("Origin: " + error.getOrigin());
+}
+```
+
+### Error Origins
+
+Technical errors include origin information:
+
+- `TRANSPORTE` - Network or HTTP error
+- `PARSEO` - JSON parsing error or invalid response
+- `CABECERA` - Business rule rejection
+
+## Error Handling
+
+### Session Expired
+
+```java
+if (!SessionContext.isAuthenticated()) {
+    return Hl7Result.error(Hl7Error.sessionExpired());
+}
+```
+
+**Response:**
+- Status: `ERROR`
+- Error code: `"SESSION_EXPIRED"`
+- Error message: `"La sesión ha expirado"`
+
+### HTTP Error
+
+```java
+if (response.getStatusCode() < 200 || response.getStatusCode() >= 300) {
+    return Hl7Result.error(
+        Hl7Error.technical(
+            "Error técnico del servidor HL7 (HTTP " + response.getStatusCode() + ")",
+            Hl7ErrorOrigin.TRANSPORTE
+        )
+    );
+}
+```
+
+### Invalid Response
+
+```java
+if (response.getBody() == null || response.getBody().isEmpty()) {
+    return Hl7Result.error(
+        Hl7Error.technical(
+            "Respuesta HL7 inválida",
+            Hl7ErrorOrigin.PARSEO
+        )
+    );
+}
+```
+
+### Rejection Example
+
+When a patient is not eligible:
+
+```json
+{
+  "rechaCabecera": 101,
+  "rechaCabeDeno": "Credencial no válida o vencida",
+  "apeNom": "PEREZ, JUAN",
+  "creden": "1234567890123456789"
+}
+```
+
+The result will be:
+- Status: `REJECTED`
+- Error code: `"101"`
+- Error message: `"Credencial no válida o vencida"`
+- Response data: Still contains patient info
+
+## Complete Usage Example
+
+```java
+import com.hl7client.model.dto.request.hl7.ElegibilidadRequest;
+import com.hl7client.model.dto.request.hl7.Manual;
+import com.hl7client.model.dto.response.hl7.ElegibilidadResponse;
+import com.hl7client.model.result.Hl7Result;
+import com.hl7client.model.result.Hl7Error;
+import com.hl7client.service.Hl7Service;
+
+public class EligibilityExample {
+    
+    private final Hl7Service hl7Service;
+    
+    public void checkPatientEligibility(String credential) {
+        // Build eligibility request
+        ElegibilidadRequest request = new ElegibilidadRequest();
+        request.setModo("N");
+        request.setCreden(credential);
+        request.setAlta(getCurrentTimestamp());
+        request.setFecdif(getCurrentDate());
+        request.setManual(Manual.MANUAL);
+        request.setTicketExt(generateTicketNumber());
+        request.setTermId(getTerminalId());
+        request.setCuit(getProviderCuit());
+        
+        // Execute eligibility check
+        Hl7Result<ElegibilidadResponse> result = 
+            hl7Service.consultarElegibilidad(request);
+        
+        // Handle response
+        if (result.isOk()) {
+            handleApprovedEligibility(result.getData().get());
+            
+        } else if (result.getStatus() == Hl7Status.REJECTED) {
+            handleRejectedEligibility(
+                result.getData().get(), 
+                result.getIssue().get()
+            );
+            
+        } else if (result.isError()) {
+            handleTechnicalError(result.getIssue().get());
+        }
+    }
+    
+    private void handleApprovedEligibility(ElegibilidadResponse response) {
+        System.out.println("Eligibility approved!");
+        System.out.println("Patient: " + response.getApeNom());
+        System.out.println("PMI: " + response.getPmi());
+        System.out.println("Plan: " + response.getPlanCodi());
+        System.out.println("Age: " + response.getEdad());
+        System.out.println("Transaction: " + response.getTransac());
+        
+        // Proceed with service registration
+    }
+    
+    private void handleRejectedEligibility(
+        ElegibilidadResponse response,
+        Hl7Error error
+    ) {
+        System.err.println("Patient not eligible:");
+        System.err.println("Code: " + error.getCode());
+        System.err.println("Reason: " + error.getMessage());
+        
+        // Patient data may still be available
+        if (response.getApeNom() != null) {
+            System.err.println("Patient: " + response.getApeNom());
+        }
+        
+        // Notify user and prevent service provision
+    }
+    
+    private void handleTechnicalError(Hl7Error error) {
+        System.err.println("Technical error: " + error.getMessage());
+        System.err.println("Origin: " + error.getOrigin());
+        
+        if (error.isSession()) {
+            // Session expired - prompt re-authentication
+            System.err.println("Session expired. Please login again.");
+        } else {
+            // Other technical issue - retry or escalate
+            System.err.println("Please try again or contact support.");
+        }
+    }
+}
+```
+
+## Best Practices
+
+<Accordion title="Always Check Eligibility First">
+  Verify patient eligibility before performing any service registration:
+  
+  ```java
+  // 1. Check eligibility
+  Hl7Result<ElegibilidadResponse> eligibility = 
+      hl7Service.consultarElegibilidad(eligibilityRequest);
+  
+  if (!eligibility.isOk()) {
+      return; // Don't proceed if not eligible
+  }
+  
+  // 2. Proceed with registration
+  Hl7Result<RegistracionResponse> registration = 
+      hl7Service.consultarRegistracion(registrationRequest);
+  ```
+</Accordion>
+
+<Accordion title="Handle All Result Types">
+  Always handle OK, REJECTED, and ERROR cases:
+  
+  ```java
+  if (result.isOk()) {
+      // Success path
+  } else if (result.getStatus() == Hl7Status.REJECTED) {
+      // Business rejection - display to user
+  } else if (result.isError()) {
+      // Technical error - retry or escalate
+  }
+  ```
+</Accordion>
+
+<Accordion title="Use Response Data Even on Rejection">
+  The response object is available even when rejected:
+  
+  ```java
+  if (result.getStatus() == Hl7Status.REJECTED) {
+      ElegibilidadResponse data = result.getData().get();
+      
+      // Can still display patient info
+      showPatientInfo(data.getApeNom(), data.getPmi());
+      
+      // Show rejection reason
+      Hl7Error error = result.getIssue().get();
+      showRejectionReason(error.getMessage());
+  }
+  ```
+</Accordion>
+
+<Accordion title="Credential Format Validation">
+  Validate credential format before making the request:
+  
+  ```java
+  private boolean isValidCredential(String credential) {
+      return credential != null 
+          && credential.length() <= 19
+          && credential.matches("\\d+");
+  }
+  ```
+</Accordion>
+
+## See Also
+
+- [Authentication](/features/authentication) - Required before eligibility checks
+- [Registration](/features/registration) - Next step after eligibility approval
+- [Error Handling Guide](/api/result-types) - Comprehensive error handling patterns

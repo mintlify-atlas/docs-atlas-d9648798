@@ -1,0 +1,424 @@
+---
+title: "Response Models"
+description: "Data transfer objects for API responses in the HL7 Connectivity Providers Client"
+---
+
+Response models define the structure of data received from the HL7 connectivity providers. These DTOs contain operation results, patient information, and transaction details.
+
+<Note>
+  All response classes use `@JsonIgnoreProperties(ignoreUnknown = true)` to ignore unexpected fields from the API.
+</Note>
+
+## Authentication Responses
+
+### LoginResponse
+
+Authentication response containing the session token and provider information.
+
+**Package:** `com.hl7client.model.dto.response.auth`
+
+<ResponseField name="token" type="String" required>
+  JWT authentication token for subsequent API requests
+</ResponseField>
+
+<ResponseField name="exp" type="String" required>
+  Token expiration timestamp
+</ResponseField>
+
+<ResponseField name="modelEspecifico" type="Prestador" required>
+  Provider-specific information and permissions
+</ResponseField>
+
+#### Example
+
+```java
+LoginResponse response = authService.login(loginRequest);
+String token = response.getToken();
+Prestador provider = response.getModelEspecifico();
+System.out.println("Logged in as: " + provider.getRazonSocialPrestador());
+```
+
+### Prestador
+
+Provider information included in the login response.
+
+**Package:** `com.hl7client.model.dto.response.auth`
+
+<ResponseField name="emailPrestador" type="String">
+  Provider's email address
+</ResponseField>
+
+<ResponseField name="cuitPrestador" type="String">
+  Provider's CUIT (tax identification number)
+</ResponseField>
+
+<ResponseField name="apellidoPrestador" type="String">
+  Provider's last name
+</ResponseField>
+
+<ResponseField name="nombrePrestador" type="String">
+  Provider's first name
+</ResponseField>
+
+<ResponseField name="razonSocialPrestador" type="String">
+  Provider's business name
+</ResponseField>
+
+<ResponseField name="habilitaADP" type="String">
+  ADP (Autorizaciones de Prestaciones) enablement flag
+</ResponseField>
+
+<ResponseField name="idPrestador" type="Integer">
+  Provider's internal identifier
+</ResponseField>
+
+<ResponseField name="idUsuario" type="Integer">
+  User's internal identifier
+</ResponseField>
+
+<ResponseField name="codPrestador" type="Integer">
+  Provider's code
+</ResponseField>
+
+<ResponseField name="admin" type="Boolean">
+  Whether the user has administrator privileges
+</ResponseField>
+
+## HL7 Operation Responses
+
+### ElegibilidadResponse
+
+Eligibility verification response containing patient coverage and benefit information.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+#### Patient Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name (last name, first name)
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient's age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient's biological sex
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Self-declared sex
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Self-declared gender
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicable
+</ResponseField>
+
+#### Transaction Information
+
+<ResponseField name="transac" type="String">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction creation timestamp
+</ResponseField>
+
+#### Rejection/Error Information
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code (0 if approved)
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Header rejection description
+</ResponseField>
+
+<ResponseField name="icdDeno" type="String">
+  ICD diagnosis description
+</ResponseField>
+
+#### Example
+
+```java
+Hl7Result<ElegibilidadResponse> result = hl7Service.checkElegibilidad(request);
+
+if (result.isOk()) {
+    ElegibilidadResponse response = result.getData().get();
+    if (response.getRechaCabecera() == 0) {
+        System.out.println("Patient: " + response.getApeNom());
+        System.out.println("Plan: " + response.getPlanCodi());
+    } else {
+        System.out.println("Rejected: " + response.getRechaCabeDeno());
+    }
+}
+```
+
+### RegistracionResponse
+
+Service registration response containing transaction results and item-level details.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+<ResponseField name="cabecera" type="RegistracionCabecera" required>
+  Header information with patient and transaction data
+</ResponseField>
+
+<ResponseField name="detalle" type="RegistracionDetalle[]">
+  Array of detail items (may be `null` if no items were processed)
+</ResponseField>
+
+<Note>
+  The `detalle` array often comes as `null` when there are no item-level rejections or observations.
+</Note>
+
+### RegistracionCabecera
+
+Header information from a registration response.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+#### Transaction Information
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier assigned by the provider
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction creation timestamp
+</ResponseField>
+
+<ResponseField name="autoriz" type="Integer">
+  Authorization number (if approved)
+</ResponseField>
+
+#### Rejection/Status Information
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code (0 if approved)
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Header rejection description
+</ResponseField>
+
+#### Patient Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient's age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient's biological sex
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Self-declared sex
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Self-declared gender
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicable
+</ResponseField>
+
+#### Additional Information
+
+<ResponseField name="icdDeno" type="String">
+  ICD diagnosis description
+</ResponseField>
+
+<ResponseField name="nomPrestad" type="String">
+  Provider name
+</ResponseField>
+
+<ResponseField name="sucursal" type="String">
+  Branch/office information
+</ResponseField>
+
+### RegistracionDetalle
+
+Detail-level item information from a registration response.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  Item rejection code (0 if approved)
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Item description or rejection message
+</ResponseField>
+
+#### Example
+
+```java
+RegistracionResponse response = result.getData().get();
+RegistracionCabecera cabecera = response.getCabecera();
+
+if (cabecera.getRechaCabecera() == 0) {
+    System.out.println("Approved! Auth: " + cabecera.getAutoriz());
+    
+    if (response.getDetalle() != null) {
+        for (RegistracionDetalle item : response.getDetalle()) {
+            if (item.getRecha() != 0) {
+                System.out.println("Item rejected: " + item.getDenoItem());
+            }
+        }
+    }
+} else {
+    System.out.println("Rejected: " + cabecera.getRechaCabeDeno());
+}
+```
+
+### CancelacionResponse
+
+Cancellation response containing the result of a service cancellation request.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+<ResponseField name="cabecera" type="CancelacionCabecera" required>
+  Header information with cancellation result
+</ResponseField>
+
+<ResponseField name="detalle" type="CancelacionDetalle[]">
+  Array of detail items showing per-item cancellation results
+</ResponseField>
+
+### CancelacionCabecera
+
+Header information from a cancellation response.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+#### Transaction Information
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction creation timestamp
+</ResponseField>
+
+#### Rejection/Status Information
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code (0 if cancellation was successful)
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Header rejection description
+</ResponseField>
+
+#### Patient Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient's age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient's biological sex
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicable
+</ResponseField>
+
+### CancelacionDetalle
+
+Detail-level item information from a cancellation response.
+
+**Package:** `com.hl7client.model.dto.response.hl7`
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  Item rejection code (0 if cancellation was successful)
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Item description or cancellation rejection message
+</ResponseField>
+
+#### Example
+
+```java
+CancelacionResponse response = result.getData().get();
+CancelacionCabecera cabecera = response.getCabecera();
+
+if (cabecera.getRechaCabecera() == 0) {
+    System.out.println("Cancellation successful");
+} else {
+    System.out.println("Cancellation rejected: " + cabecera.getRechaCabeDeno());
+}
+
+if (response.getDetalle() != null) {
+    for (CancelacionDetalle item : response.getDetalle()) {
+        System.out.println("Item: " + item.getDenoItem() + 
+                         " - Status: " + (item.getRecha() == 0 ? "OK" : "Rejected"));
+    }
+}
+```

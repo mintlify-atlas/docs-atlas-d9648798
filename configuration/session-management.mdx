@@ -1,0 +1,500 @@
+---
+title: "Session Management"
+description: "Manage authentication state, token lifecycle, and automatic session refresh"
+---
+
+## Overview
+
+The HL7 Connectivity Providers Client maintains session state through a thread-safe singleton pattern. Session management includes token storage, provider information, environment context, and automatic token refresh scheduling.
+
+## SessionContext
+
+`SessionContext` is the central state management class that provides thread-safe access to session data.
+
+### Session State Structure
+
+The `SessionState` record holds all session data:
+
+```java SessionState.java:6-27
+public final class SessionState {
+    private final String token;
+    private final String tokenExp;
+    private final Prestador prestador;
+    private final Environment environment;
+    private final DeviceRequest device;
+    
+    SessionState(
+            String token,
+            String tokenExp,
+            Prestador prestador,
+            Environment environment,
+            DeviceRequest device
+    ) {
+        this.token = token;
+        this.tokenExp = tokenExp;
+        this.prestador = prestador;
+        this.environment = environment;
+        this.device = device;
+    }
+}
+```
+
+### Thread Safety
+
+Session state is stored in an `AtomicReference` for thread-safe operations:
+
+```java SessionContext.java:13-14
+private static final AtomicReference<SessionState> STATE =
+        new AtomicReference<>(SessionState.empty());
+```
+
+<Info>
+All state updates are atomic operations, ensuring thread safety in multi-threaded environments.
+</Info>
+
+## Session Initialization
+
+### Initial Login
+
+Initialize the session after successful authentication:
+
+```java SessionContext.java:56-72
+public static void initialize(
+        String token,
+        String tokenExp,
+        Prestador prestador,
+        Environment environment,
+        DeviceRequest device
+) {
+    STATE.set(new SessionState(
+            token,
+            tokenExp,
+            prestador,
+            environment,
+            device
+    ));
+
+    LOGGER.info("Session initialized. Environment=" + environment);
+}
+```
+
+**Usage Example:**
+
+```java
+// After successful login
+AuthResponse response = authClient.login(credentials, environment, device);
+
+SessionContext.initialize(
+    response.getToken(),
+    response.getTokenExp(),
+    response.getPrestador(),
+    environment,
+    device
+);
+```
+
+### Update Authentication
+
+Update token and provider information while preserving environment and device:
+
+```java SessionContext.java:74-94
+public static void updateAuth(
+        String token,
+        String tokenExp,
+        Prestador prestador
+) {
+    STATE.updateAndGet(current -> {
+        if (current.environment() == null || current.device() == null) {
+            LOGGER.warning("Updating auth on uninitialized session state");
+        }
+
+        return new SessionState(
+                token,
+                tokenExp,
+                prestador,
+                current.environment(),
+                current.device()
+        );
+    });
+
+    LOGGER.fine("Session authentication updated");
+}
+```
+
+**Usage Example:**
+
+```java
+// After token refresh
+AuthRefreshResponse response = authClient.refreshToken();
+
+SessionContext.updateAuth(
+    response.getToken(),
+    response.getTokenExp(),
+    response.getPrestador()
+);
+```
+
+<Warning>
+`updateAuth()` should only be called on an initialized session. Calling it before `initialize()` will log a warning.
+</Warning>
+
+## Accessing Session Data
+
+### Authentication Token
+
+```java SessionContext.java:21-28
+public static String getToken() {
+    return STATE.get().token();
+}
+
+public static boolean isAuthenticated() {
+    SessionState state = STATE.get();
+    return state.token() != null && !state.token().isEmpty();
+}
+```
+
+**Usage:**
+
+```java
+// Add token to request headers
+if (SessionContext.isAuthenticated()) {
+    String token = SessionContext.getToken();
+    headers.put("Authorization", "Bearer " + token);
+}
+```
+
+### Provider Information
+
+```java SessionContext.java:38-40
+public static Prestador getPrestador() {
+    return STATE.get().prestador();
+}
+```
+
+**Usage:**
+
+```java
+// Display current provider in UI
+Prestador provider = SessionContext.getPrestador();
+if (provider != null) {
+    System.out.println("Logged in as: " + provider.getNombre());
+}
+```
+
+### Environment and Device
+
+```java SessionContext.java:44-52
+public static Environment getEnvironment() {
+    return STATE.get().environment();
+}
+
+public static DeviceRequest getDevice() {
+    return STATE.get().device();
+}
+```
+
+## Session Termination
+
+### Clear Session
+
+```java SessionContext.java:98-101
+public static void clear() {
+    STATE.set(SessionState.empty());
+    LOGGER.info("Session cleared");
+}
+```
+
+### Session End Reasons
+
+The `SessionEndReason` enum defines why a session ended:
+
+```java SessionEndReason.java:3-7
+public enum SessionEndReason {
+    MANUAL_LOGOUT,      // User explicitly logged out
+    SESSION_EXPIRED,    // Token expired and refresh failed
+    UNAUTHORIZED        // Server returned 401 Unauthorized
+}
+```
+
+**Usage:**
+
+```java
+// Handle logout
+public void logout(SessionEndReason reason) {
+    SessionRefreshManager.stop();
+    SessionContext.clear();
+    
+    switch (reason) {
+        case MANUAL_LOGOUT:
+            showMessage("Logged out successfully");
+            break;
+        case SESSION_EXPIRED:
+            showMessage("Session expired. Please login again.");
+            break;
+        case UNAUTHORIZED:
+            showMessage("Authentication failed. Please login again.");
+            break;
+    }
+}
+```
+
+## Automatic Token Refresh
+
+### SessionRefreshManager
+
+`SessionRefreshManager` automatically schedules token refresh before expiration.
+
+#### Refresh Configuration
+
+```java SessionRefreshManager.java:20-23
+private static final DateTimeFormatter EXP_FORMAT =
+        DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+private static final Duration REFRESH_BEFORE = Duration.ofMinutes(2);
+```
+
+<Note>
+Tokens are automatically refreshed 2 minutes before expiration.
+</Note>
+
+### Starting Automatic Refresh
+
+```java SessionRefreshManager.java:32-62
+public static synchronized void ensureStarted(AuthRefresher refresher) {
+    Objects.requireNonNull(refresher, "AuthRefresher requerido para refresh");
+
+    stop();
+
+    String tokenExp = SessionContext.getTokenExp();
+    if (tokenExp == null || tokenExp.isEmpty()) {
+        LOGGER.fine("No tokenExp present, refresh scheduler not started");
+        return;
+    }
+
+    long delaySeconds;
+    try {
+        delaySeconds = calculateDelaySeconds(tokenExp);
+    } catch (Exception e) {
+        LOGGER.log(Level.SEVERE, "Invalid tokenExp format, clearing session", e);
+        SessionContext.clear();
+        return;
+    }
+
+    scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "session-refresh-thread");
+        t.setDaemon(true);
+        return t;
+    });
+
+    LOGGER.info("Session refresh scheduled in " + delaySeconds + " seconds");
+
+    scheduler.schedule(() -> refreshAndReschedule(refresher),
+            delaySeconds, TimeUnit.SECONDS);
+}
+```
+
+### Refresh Calculation
+
+```java SessionRefreshManager.java:85-96
+private static long calculateDelaySeconds(String tokenExp) {
+    LocalDateTime expTime =
+            LocalDateTime.parse(tokenExp, EXP_FORMAT);
+
+    LocalDateTime refreshTime = expTime.minus(REFRESH_BEFORE);
+
+    long delay = Duration
+            .between(LocalDateTime.now(), refreshTime)
+            .getSeconds();
+
+    return Math.max(delay, 5);
+}
+```
+
+<Info>
+The minimum refresh delay is 5 seconds to prevent immediate refresh attempts.
+</Info>
+
+### Implementing AuthRefresher
+
+Provide an `AuthRefresher` implementation to handle token refresh:
+
+```java AuthRefresher.java:13-21
+public interface AuthRefresher {
+    /**
+     * Refreshes authentication credentials.
+     *
+     * @throws RuntimeException if the refresh fails
+     */
+    void refreshAuth();
+}
+```
+
+**Implementation Example:**
+
+```java
+public class DefaultAuthRefresher implements AuthRefresher {
+    private final AuthClient authClient;
+    
+    @Override
+    public void refreshAuth() {
+        try {
+            // Get refresh URL for current environment
+            Environment env = SessionContext.getEnvironment();
+            String refreshUrl = EnvironmentConfig.getAuthRefreshUrl(env);
+            
+            // Call refresh endpoint
+            AuthRefreshResponse response = authClient.refresh(refreshUrl);
+            
+            // Update session with new token
+            SessionContext.updateAuth(
+                response.getToken(),
+                response.getTokenExp(),
+                response.getPrestador()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Token refresh failed", e);
+        }
+    }
+}
+```
+
+### Refresh Lifecycle
+
+```java SessionRefreshManager.java:74-83
+private static void refreshAndReschedule(AuthRefresher refresher) {
+    try {
+        refresher.refreshAuth();
+        ensureStarted(refresher);
+    } catch (Exception e) {
+        LOGGER.log(Level.SEVERE, "Session refresh failed, clearing session", e);
+        SessionContext.clear();
+        stop();
+    }
+}
+```
+
+<Warning>
+If token refresh fails, the session is automatically cleared and the scheduler is stopped.
+</Warning>
+
+### Stopping Refresh Scheduler
+
+```java SessionRefreshManager.java:64-70
+public static synchronized void stop() {
+    if (scheduler != null) {
+        scheduler.shutdownNow();
+        scheduler = null;
+        LOGGER.fine("Session refresh scheduler stopped");
+    }
+}
+```
+
+## Complete Session Flow
+
+<Tabs>
+  <Tab title="Login Flow">
+    ```java
+    // 1. User provides credentials
+    LoginRequest request = new LoginRequest(username, password);
+    Environment env = Environment.PRD;
+    DeviceRequest device = new DeviceRequest(deviceId, deviceType);
+    
+    // 2. Authenticate
+    AuthResponse response = authClient.login(request, env, device);
+    
+    // 3. Initialize session
+    SessionContext.initialize(
+        response.getToken(),
+        response.getTokenExp(),
+        response.getPrestador(),
+        env,
+        device
+    );
+    
+    // 4. Start automatic refresh
+    AuthRefresher refresher = new DefaultAuthRefresher(authClient);
+    SessionRefreshManager.ensureStarted(refresher);
+    
+    System.out.println("Login successful");
+    ```
+  </Tab>
+  
+  <Tab title="Authenticated Request">
+    ```java
+    // Check authentication status
+    if (!SessionContext.isAuthenticated()) {
+        throw new IllegalStateException("Not authenticated");
+    }
+    
+    // Get token for request
+    String token = SessionContext.getToken();
+    
+    // Get environment-specific URL
+    Environment env = SessionContext.getEnvironment();
+    String url = EnvironmentConfig.getHl7ElegibilidadUrl(env);
+    
+    // Make authenticated request
+    HttpHeaders headers = new HttpHeaders();
+    headers.put("Authorization", "Bearer " + token);
+    
+    Hl7Response response = httpClient.post(url, hl7Message, headers);
+    ```
+  </Tab>
+  
+  <Tab title="Logout Flow">
+    ```java
+    // 1. Stop automatic refresh
+    SessionRefreshManager.stop();
+    
+    // 2. Optional: Call logout endpoint
+    if (SessionContext.isAuthenticated()) {
+        try {
+            authClient.logout();
+        } catch (Exception e) {
+            LOGGER.warning("Logout request failed: " + e.getMessage());
+        }
+    }
+    
+    // 3. Clear session state
+    SessionContext.clear();
+    
+    System.out.println("Logged out successfully");
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Info>
+**Session Initialization:**
+- Always call `initialize()` after successful login
+- Start the refresh manager immediately after initialization
+- Validate that `tokenExp` is provided by the authentication service
+</Info>
+
+<Info>
+**Token Management:**
+- Use `isAuthenticated()` before making API calls
+- Implement proper error handling for 401 responses
+- Clear session on authentication failures
+</Info>
+
+<Warning>
+**Thread Safety:**
+- Never cache session values across threads
+- Always retrieve fresh values using `SessionContext` getters
+- Use `updateAuth()` for atomic token updates during refresh
+</Warning>
+
+<Warning>
+**Cleanup:**
+- Always call `SessionRefreshManager.stop()` before `SessionContext.clear()`
+- Ensure proper cleanup in application shutdown hooks
+- Handle refresh failures gracefully
+</Warning>
+
+## Related Resources
+
+- [Environments](/configuration/environments) - Environment configuration and URL construction
+- [Authentication](/features/authentication) - Authentication endpoints and flow
+- [Error Handling](/api/result-types) - Handle session errors and token expiration

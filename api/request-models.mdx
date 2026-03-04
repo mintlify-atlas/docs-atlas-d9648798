@@ -1,0 +1,373 @@
+---
+title: "Request Models"
+description: "Data transfer objects for API requests in the HL7 Connectivity Providers Client"
+---
+
+Request models define the structure of data sent to the HL7 connectivity providers. These DTOs are used for authentication and HL7 operations.
+
+## Authentication Requests
+
+### LoginRequest
+
+Authentication request containing user credentials and device information.
+
+**Package:** `com.hl7client.model.dto.request.auth`
+
+<ParamField path="apiKey" type="String" required>
+  API key for authentication with the HL7 connectivity provider
+</ParamField>
+
+<ParamField path="email" type="String" required>
+  User's email address
+</ParamField>
+
+<ParamField path="password" type="String" required>
+  User's password
+</ParamField>
+
+<ParamField path="device" type="DeviceRequest" required>
+  Device information for the authentication request
+</ParamField>
+
+#### Example
+
+```java
+DeviceRequest device = new DeviceRequest(
+    "messaging-id-123",
+    "device-id-456",
+    "My Desktop"
+);
+
+LoginRequest request = new LoginRequest(
+    "your-api-key",
+    "user@example.com",
+    "password123",
+    device
+);
+```
+
+### DeviceRequest
+
+Device information included in authentication requests.
+
+**Package:** `com.hl7client.model.dto.request.auth`
+
+<ParamField path="messagingid" type="String" required>
+  Messaging identifier for push notifications
+</ParamField>
+
+<ParamField path="deviceid" type="String" required>
+  Unique device identifier
+</ParamField>
+
+<ParamField path="devicename" type="String" required>
+  Human-readable device name
+</ParamField>
+
+<ParamField path="bloqueado" type="boolean">
+  Whether the device is blocked (always `false` in constructor)
+</ParamField>
+
+<ParamField path="recordar" type="boolean">
+  Whether to remember the device (always `false` in constructor)
+</ParamField>
+
+## HL7 Operation Requests
+
+### ElegibilidadRequest
+
+Eligibility verification request to check patient coverage and benefits.
+
+**Package:** `com.hl7client.model.dto.request.hl7`
+
+**Serialization:** Fields with `null` values are excluded from JSON output (`@JsonInclude(JsonInclude.Include.NON_NULL)`)
+
+#### Operation Data
+
+<ParamField path="modo" type="String">
+  Operation mode (max length: 1)
+</ParamField>
+
+<ParamField path="creden" type="String">
+  Credential/card number (max length: 19)
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration timestamp in ISO format: `yyyy-MM-dd'T'HH:mm:ss`
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Differential date in format: `yyyy-MM-dd`
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator (enum value)
+</ParamField>
+
+#### Technical Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal number
+</ParamField>
+
+#### Provider Data
+
+<ParamField path="cuit" type="String">
+  Provider's CUIT (tax identification number)
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Origin of provider registration/license
+</ParamField>
+
+#### Previous Result
+
+<ParamField path="autoriz" type="Integer">
+  Authorization number from previous operation
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  External rejection code from previous operation
+</ParamField>
+
+### RegistracionRequest
+
+Service registration request for submitting healthcare services and procedures.
+
+**Package:** `com.hl7client.model.dto.request.hl7`
+
+**Serialization:** Fields with `null` values are excluded from JSON output
+
+#### Operation Data
+
+<ParamField path="modo" type="String">
+  Operation mode (max length: 1)
+</ParamField>
+
+<ParamField path="creden" type="String">
+  Credential/card number (max length: 23)
+</ParamField>
+
+<ParamField path="tipo" type="Integer">
+  Transaction type (tinyint)
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration timestamp (datetime)
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Differential date (max length: 10)
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator
+</ParamField>
+
+<ParamField path="consulta" type="Manual">
+  Consultation indicator
+</ParamField>
+
+#### Technical Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier (max length: 20)
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal number
+</ParamField>
+
+#### Provider Data
+
+<ParamField path="cuit" type="String">
+  Provider's CUIT (max length: 40)
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Origin of provider registration (max length: 10)
+</ParamField>
+
+#### Previous Result
+
+<ParamField path="autoriz" type="Integer">
+  Authorization number from previous operation
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  External rejection code (smallint)
+</ParamField>
+
+#### HL7 Extended Fields
+
+<ParamField path="icd" type="String">
+  ICD diagnosis code (max length: 6)
+</ParamField>
+
+<ParamField path="param1" type="String">
+  Free parameter 1 (max length: 255)
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Free parameter 2 (max length: 255)
+</ParamField>
+
+<ParamField path="param3" type="String">
+  Free parameter 3 (max length: 255)
+</ParamField>
+
+<ParamField path="tipoEfector" type="String">
+  Type of effector/provider (max length: 4)
+</ParamField>
+
+<ParamField path="idEfector" type="String">
+  Effector identifier (max length: 11)
+</ParamField>
+
+<ParamField path="tipoPrescr" type="String">
+  Type of prescriber (max length: 4)
+</ParamField>
+
+<ParamField path="idPrescr" type="String">
+  Prescriber identifier (max length: 11)
+</ParamField>
+
+<ParamField path="msgId" type="String">
+  Message identifier (max length: 20)
+</ParamField>
+
+<ParamField path="ackacept" type="String">
+  Acknowledgment acceptance code (max length: 2)
+</ParamField>
+
+<ParamField path="ackackapl" type="String">
+  Acknowledgment application code (max length: 2)
+</ParamField>
+
+<ParamField path="tipoMensaje" type="String">
+  Message type (max length: 1)
+</ParamField>
+
+<ParamField path="powerBuilder" type="Boolean">
+  PowerBuilder client flag
+</ParamField>
+
+### CancelacionRequest
+
+Cancellation request for reversing previously registered services.
+
+**Package:** `com.hl7client.model.dto.request.hl7`
+
+**Serialization:** Fields with `null` values are excluded from JSON output
+
+#### Operation Data
+
+<ParamField path="modo" type="String">
+  Operation mode (typically "N")
+</ParamField>
+
+<ParamField path="creden" type="Long">
+  Credential/card number
+</ParamField>
+
+<ParamField path="tipo" type="Integer">
+  Transaction type
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration timestamp (can be empty)
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator (nullable)
+</ParamField>
+
+#### Cancellation Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number
+</ParamField>
+
+<ParamField path="cancelCab" type="Integer">
+  Cancellation header identifier (nullable)
+</ParamField>
+
+<ParamField path="cancelModo" type="String">
+  Cancellation mode (typically "N")
+</ParamField>
+
+<ParamField path="errorExt" type="Integer">
+  External error code (nullable)
+</ParamField>
+
+#### Technical Data
+
+<ParamField path="termId" type="String">
+  Terminal identifier
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal number
+</ParamField>
+
+#### Provider Data
+
+<ParamField path="cuit" type="Long">
+  Provider's CUIT
+</ParamField>
+
+#### Free Parameters
+
+<ParamField path="param1" type="String">
+  Free parameter 1
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Free parameter 2
+</ParamField>
+
+## Enumerations
+
+### Manual
+
+Indicates the processing mode for HL7 operations.
+
+**Package:** `com.hl7client.model.dto.request.hl7`
+
+**Values:**
+
+<ResponseField name="MANUAL" type="String">
+  Manual processing mode (value: "0")
+</ResponseField>
+
+<ResponseField name="CAPITADOR" type="String">
+  Capitation mode (value: "C")
+</ResponseField>
+
+<ResponseField name="COMSULTA" type="String">
+  Consultation mode (value: "L")
+</ResponseField>
+
+<Note>
+  The enum values are serialized to their string representations using `@JsonValue`.
+</Note>
+
+#### Example
+
+```java
+ElegibilidadRequest request = new ElegibilidadRequest();
+request.setManual(Manual.MANUAL);
+// Serializes as: {"manual": "0"}
+```

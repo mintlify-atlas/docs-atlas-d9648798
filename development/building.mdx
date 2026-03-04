@@ -1,0 +1,470 @@
+---
+title: Building
+description: Learn how to build, package, and distribute the HL7 Connectivity Providers Client using Maven
+---
+
+## Overview
+
+The HL7 Connectivity Providers Client uses Apache Maven for dependency management, compilation, and packaging. The build produces a fully self-contained executable JAR with all dependencies bundled.
+
+## Maven Configuration
+
+The project is configured through `pom.xml` with the following coordinates:
+
+```xml pom.xml
+<groupId>ar.com.swissmedical.connectivity</groupId>
+<artifactId>connectivity-providers-client</artifactId>
+<version>1.0-SNAPSHOT</version>
+```
+
+## Build Properties
+
+The build uses Java 8 for maximum compatibility with legacy environments.
+
+```xml pom.xml
+<properties>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <httpclient.version>4.5.14</httpclient.version>
+</properties>
+```
+
+<Note>
+**Java 8 Compatibility**: The project targets Java 1.8 to ensure compatibility with older enterprise environments while maintaining modern development practices.
+</Note>
+
+## Dependencies
+
+The application uses carefully selected dependencies for UI, networking, and data processing.
+
+### UI Framework
+
+```xml pom.xml
+<!-- FlatLaf - Modern Swing Look and Feel -->
+<dependency>
+    <groupId>com.formdev</groupId>
+    <artifactId>flatlaf</artifactId>
+    <version>3.7</version>
+</dependency>
+
+<!-- FlatLaf Extras - SVG support -->
+<dependency>
+    <groupId>com.formdev</groupId>
+    <artifactId>flatlaf-extras</artifactId>
+    <version>3.7</version>
+</dependency>
+
+<!-- Date Picker Component -->
+<dependency>
+    <groupId>com.github.lgooddatepicker</groupId>
+    <artifactId>LGoodDatePicker</artifactId>
+    <version>11.2.1</version>
+</dependency>
+```
+
+### JSON Processing
+
+```xml pom.xml
+<!-- Jackson for JSON serialization/deserialization -->
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.16.0</version>
+</dependency>
+```
+
+### HTTP Client
+
+```xml pom.xml
+<!-- Apache HttpClient 4.5.x (Java 8 compatible) -->
+<dependency>
+    <groupId>org.apache.httpcomponents</groupId>
+    <artifactId>httpclient</artifactId>
+    <version>${httpclient.version}</version>
+</dependency>
+
+<!-- Force updated commons-codec to resolve security vulnerability -->
+<dependency>
+    <groupId>commons-codec</groupId>
+    <artifactId>commons-codec</artifactId>
+    <version>1.17.1</version>
+</dependency>
+
+<!-- HTTP MIME support for multipart requests -->
+<dependency>
+    <groupId>org.apache.httpcomponents</groupId>
+    <artifactId>httpmime</artifactId>
+    <version>${httpclient.version}</version>
+</dependency>
+```
+
+<Info>
+**Security Update**: The build explicitly includes `commons-codec` 1.17.1 to address vulnerability WS-2019-0379 found in older transitive dependencies.
+</Info>
+
+### Testing
+
+```xml pom.xml
+<!-- JUnit 5 for unit testing -->
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter</artifactId>
+    <version>5.10.0</version>
+    <scope>test</scope>
+</dependency>
+```
+
+## Maven Plugins
+
+The build process uses three Maven plugins to compile, package, and configure the application.
+
+### Compiler Plugin
+
+```xml pom.xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <version>3.11.0</version>
+</plugin>
+```
+
+Inherits compiler settings from the `<properties>` section (Java 1.8, UTF-8).
+
+### Shade Plugin
+
+The Maven Shade Plugin creates an uber-JAR (fat JAR) containing all dependencies.
+
+```xml pom.xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-shade-plugin</artifactId>
+    <version>3.6.0</version>
+    <executions>
+        <execution>
+            <phase>package</phase>
+            <goals>
+                <goal>shade</goal>
+            </goals>
+            <configuration>
+                <transformers>
+                    <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                        <mainClass>com.hl7client.Main</mainClass>
+                    </transformer>
+                </transformers>
+                <!-- Avoid signature conflicts -->
+                <filters>
+                    <filter>
+                        <artifact>*:*</artifact>
+                        <excludes>
+                            <exclude>META-INF/*.SF</exclude>
+                            <exclude>META-INF/*.DSA</exclude>
+                            <exclude>META-INF/*.RSA</exclude>
+                        </excludes>
+                    </filter>
+                </filters>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+<Accordion title="Understanding the Shade Plugin Configuration">
+**Key Configuration Elements:**
+
+1. **Phase**: Runs during the `package` phase of Maven lifecycle
+2. **Main Class**: Sets `com.hl7client.Main` as the entry point
+3. **Filters**: Removes signature files (`.SF`, `.DSA`, `.RSA`) to prevent conflicts when merging JARs
+
+**What It Does:**
+- Bundles all dependencies into a single JAR
+- Relocates conflicting classes if needed (none configured here)
+- Generates executable JAR with proper manifest
+- Produces `connectivity-providers-client-1.0-SNAPSHOT.jar`
+</Accordion>
+
+### JAR Plugin
+
+Configures the JAR manifest with build metadata.
+
+```xml pom.xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-jar-plugin</artifactId>
+    <version>3.3.0</version>
+    <configuration>
+        <archive>
+            <manifest>
+                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+            </manifest>
+        </archive>
+    </configuration>
+</plugin>
+```
+
+This adds implementation metadata to the JAR manifest:
+
+```
+Implementation-Title: connectivity-providers-client
+Implementation-Version: 1.0-SNAPSHOT
+Implementation-Vendor-Id: ar.com.swissmedical.connectivity
+```
+
+## Maven Lifecycle
+
+The standard Maven build lifecycle applies:
+
+<Steps>
+  <Step title="validate">
+    Validates project structure and configuration
+  </Step>
+  <Step title="compile">
+    Compiles Java source files from `src/main/java` to `target/classes`
+  </Step>
+  <Step title="test-compile">
+    Compiles test sources from `src/test/java` to `target/test-classes`
+  </Step>
+  <Step title="test">
+    Runs unit tests using JUnit 5
+  </Step>
+  <Step title="package">
+    Creates JAR file and runs Shade plugin to bundle dependencies
+  </Step>
+  <Step title="install">
+    Installs artifact to local Maven repository (`~/.m2/repository`)
+  </Step>
+</Steps>
+
+## Build Commands
+
+### Clean Build
+
+Removes the `target` directory and performs a fresh build:
+
+```bash
+mvn clean package
+```
+
+<Note>
+This is the recommended command for production builds to ensure no stale artifacts.
+</Note>
+
+### Quick Build (Skip Tests)
+
+Builds without running tests (faster, for development):
+
+```bash
+mvn clean package -DskipTests
+```
+
+### Install to Local Repository
+
+Builds and installs to local Maven cache:
+
+```bash
+mvn clean install
+```
+
+### Compile Only
+
+Compiles sources without packaging:
+
+```bash
+mvn compile
+```
+
+### Run Tests Only
+
+Executes unit tests without building:
+
+```bash
+mvn test
+```
+
+## Build Artifacts
+
+After a successful build, Maven produces several artifacts:
+
+```
+target/
+├── classes/                                           # Compiled .class files
+├── generated-sources/                                 # Generated source files
+├── maven-archiver/                                    # Maven metadata
+├── maven-status/                                      # Build status tracking
+├── connectivity-providers-client-1.0-SNAPSHOT.jar     # Original JAR (without dependencies)
+└── connectivity-providers-client-1.0-SNAPSHOT-shaded.jar  # Uber-JAR (with all dependencies)
+```
+
+<Info>
+**Production Artifact**: The shaded JAR (`*-shaded.jar`) is the distributable artifact. It contains all dependencies and can be executed with `java -jar`.
+</Info>
+
+## Running the Application
+
+After building, execute the application:
+
+```bash
+java -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+```
+
+The application will:
+1. Initialize the FlatLaf theme
+2. Load dental data from CSV resources
+3. Display the login window
+
+## Build Output Example
+
+```bash
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ------< ar.com.swissmedical.connectivity:connectivity-providers-client >------
+[INFO] Building connectivity-providers-client 1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ connectivity-providers-client ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 87 source files to /workspace/source/target/classes
+[INFO] 
+[INFO] --- maven-shade-plugin:3.6.0:shade (default) @ connectivity-providers-client ---
+[INFO] Including com.formdev:flatlaf:jar:3.7 in the shaded jar.
+[INFO] Including com.fasterxml.jackson.core:jackson-databind:jar:2.16.0 in the shaded jar.
+[INFO] Including org.apache.httpcomponents:httpclient:jar:4.5.14 in the shaded jar.
+[INFO] Replacing original artifact with shaded artifact.
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+```
+
+## Manifest Configuration
+
+The generated JAR manifest includes:
+
+```
+Manifest-Version: 1.0
+Main-Class: com.hl7client.Main
+Implementation-Title: connectivity-providers-client
+Implementation-Version: 1.0-SNAPSHOT
+Implementation-Vendor-Id: ar.com.swissmedical.connectivity
+Built-By: maven
+Build-Jdk: 1.8.0_XXX
+Created-By: Apache Maven 3.9.x
+```
+
+<Accordion title="Entry Point: Main.java">
+The `Main-Class` points to `com.hl7client.Main`, which bootstraps the application:
+
+```java Main.java
+package com.hl7client;
+
+import javax.swing.SwingUtilities;
+
+public class Main {
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            Application app = new Application();
+            app.start();
+        });
+    }
+}
+```
+
+This ensures all Swing operations run on the Event Dispatch Thread (EDT).
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="OutOfMemoryError during build">
+    Increase Maven memory:
+    
+    ```bash
+    export MAVEN_OPTS="-Xmx1024m"
+    mvn clean package
+    ```
+  </Accordion>
+  
+  <Accordion title="Dependency resolution failures">
+    Clear local repository cache:
+    
+    ```bash
+    rm -rf ~/.m2/repository/com/formdev
+    rm -rf ~/.m2/repository/org/apache/httpcomponents
+    mvn clean package
+    ```
+  </Accordion>
+  
+  <Accordion title="Main class not found when running JAR">
+    Ensure you're running the shaded JAR, not the original:
+    
+    ```bash
+    # Wrong (missing dependencies)
+    java -jar connectivity-providers-client-1.0-SNAPSHOT.jar
+    
+    # Correct (includes all dependencies)
+    java -jar connectivity-providers-client-1.0-SNAPSHOT-shaded.jar
+    ```
+  </Accordion>
+  
+  <Accordion title="Signature verification errors">
+    The Shade plugin filters should handle this, but if issues persist:
+    
+    ```bash
+    # Run with security manager disabled
+    java -Djava.security.manager=allow -jar connectivity-providers-client-1.0-SNAPSHOT.jar
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Distribution
+
+For distribution, package the shaded JAR with:
+
+1. **README** with system requirements (Java 8+)
+2. **Launch scripts** for different platforms
+3. **Configuration files** (if external config needed)
+
+### Example Launch Script (Unix)
+
+```bash launch.sh
+#!/bin/bash
+JAVA_CMD="java"
+JAR_FILE="connectivity-providers-client-1.0-SNAPSHOT.jar"
+
+if ! command -v $JAVA_CMD &> /dev/null; then
+    echo "Java not found. Please install Java 8 or higher."
+    exit 1
+fi
+
+JAVA_VERSION=$($JAVA_CMD -version 2>&1 | head -n 1 | cut -d'"' -f2)
+echo "Running with Java $JAVA_VERSION"
+
+$JAVA_CMD -jar $JAR_FILE
+```
+
+### Example Launch Script (Windows)
+
+```batch launch.bat
+@echo off
+set JAVA_CMD=java
+set JAR_FILE=connectivity-providers-client-1.0-SNAPSHOT.jar
+
+%JAVA_CMD% -version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Java not found. Please install Java 8 or higher.
+    pause
+    exit /b 1
+)
+
+%JAVA_CMD% -jar %JAR_FILE%
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the application's architectural patterns
+  </Card>
+  <Card title="Dental Module" icon="tooth" href="/development/dental-module">
+    Explore dental-specific validation and formatting
+  </Card>
+</CardGroup>

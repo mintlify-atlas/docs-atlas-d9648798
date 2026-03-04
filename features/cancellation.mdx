@@ -1,0 +1,632 @@
+---
+title: Service Cancellation
+description: Cancel previously registered healthcare service transactions
+icon: ban
+---
+
+## Overview
+
+The cancellation service (Cancelación) reverses previously registered healthcare transactions. Like registration, it supports both complete and partial cancellation scenarios where individual items within a transaction may have different outcomes.
+
+## Cancellation Request
+
+### Method Signature
+
+```java
+public Hl7Result<CancelacionResponse> cancelarPrestacion(
+    CancelacionRequest request
+)
+```
+
+Source: `Hl7Service.java:52-63`
+
+<Note>
+  Cancellation requires an active authenticated session and should reference a valid previously registered transaction.
+</Note>
+
+## CancelacionRequest Structure
+
+### Operation Data
+
+<ParamField path="modo" type="String" required>
+  Operation mode - typically "N" for normal cancellation
+</ParamField>
+
+<ParamField path="creden" type="Long" required>
+  Patient credential number (numeric format)
+</ParamField>
+
+<ParamField path="tipo" type="Integer" required>
+  Transaction type code
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Original service date/time (can be empty for cancellation)
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing flag:
+  - `Manual.MANUAL` ("0")
+  - `Manual.CAPITADOR` ("C")
+  - `Manual.COMSULTA` ("L")
+</ParamField>
+
+### Cancellation-Specific Data
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number - typically 0 for cancellation
+</ParamField>
+
+<ParamField path="cancelCab" type="Integer">
+  Transaction number to cancel (cabecera level)
+</ParamField>
+
+<ParamField path="cancelModo" type="String">
+  Cancellation mode - typically "N" for normal
+</ParamField>
+
+<ParamField path="errorExt" type="Integer">
+  External error code (if applicable)
+</ParamField>
+
+### Technical Data
+
+<ParamField path="termId" type="String">
+  Terminal identifier
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+### Provider Data
+
+<ParamField path="cuit" type="Long">
+  Provider CUIT (tax identification number)
+</ParamField>
+
+### HL7 Free Parameters
+
+<ParamField path="param1" type="String">
+  Custom parameter 1 (up to 255 characters)
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Custom parameter 2 (up to 255 characters)
+</ParamField>
+
+### Request Example
+
+```java
+CancelacionRequest request = new CancelacionRequest();
+
+// Operation data
+request.setModo("N");
+request.setCreden(7180171001151L);
+request.setTipo(2);
+request.setAlta("");  // Can be empty for cancellation
+request.setManual(Manual.MANUAL);
+
+// Cancellation-specific
+request.setTicketExt(0);
+request.setCancelCab(123456);  // Transaction to cancel
+request.setCancelModo("N");
+
+// Technical data
+request.setTermId("TERM-001");
+request.setInterNro(200);
+
+// Provider
+request.setCuit(20123456789L);
+
+// Optional parameters
+request.setParam1("Cancellation reason");
+request.setParam2("Additional info");
+```
+
+<Warning>
+  The `cancelCab` field must reference a valid, previously registered transaction number obtained from a successful registration response.
+</Warning>
+
+## Cancellation Response
+
+### Response Structure
+
+The cancellation response mirrors the registration structure with cabecera and detalle:
+
+**Source: CancelacionResponse.java**
+
+```java
+public class CancelacionResponse {
+    private CancelacionCabecera cabecera;
+    private CancelacionDetalle[] detalle;
+}
+```
+
+### Cabecera (Header) Fields
+
+<ResponseField name="transac" type="Long">
+  Cancellation transaction number (different from original registration)
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Cancellation transaction creation timestamp
+</ResponseField>
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code. If greater than 0, the cancellation is rejected.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable rejection reason for header rejection
+</ResponseField>
+
+<ResponseField name="apeNom" type="String">
+  Patient's last name and first name
+</ResponseField>
+
+<ResponseField name="planCodi" type="String">
+  Patient's plan code
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient sex
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Taxable status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+### Detalle (Detail) Fields
+
+<ResponseField name="transac" type="Long">
+  Detail-level cancellation transaction number
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  Detail item rejection code. If greater than 0, this specific item cancellation is rejected.
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Human-readable rejection reason for this specific item
+</ResponseField>
+
+## Validation Logic
+
+Cancellation validation follows the same pattern as registration, supporting partial outcomes:
+
+**Source: Hl7Service.java:171-209**
+
+```java
+private Hl7Result<CancelacionResponse> validarCancelacion(
+    CancelacionResponse r
+) {
+    if (r == null || r.getCabecera() == null) {
+        return errorRespuestaInvalida();
+    }
+    
+    CancelacionCabecera cab = r.getCabecera();
+    
+    // Check for header rejection
+    if (cab.getRechaCabecera() != null && cab.getRechaCabecera() > 0) {
+        return Hl7Result.rejected(
+            r,
+            Hl7Error.functional(
+                String.valueOf(cab.getRechaCabecera()),
+                cab.getRechaCabeDeno()
+            )
+        );
+    }
+    
+    // Check for detail item rejections
+    List<Hl7ItemError> detalles = new ArrayList<>();
+    
+    if (r.getDetalle() != null) {
+        for (CancelacionDetalle d : r.getDetalle()) {
+            if (d.getRecha() != null && d.getRecha() > 0) {
+                detalles.add(
+                    new Hl7ItemError(
+                        String.valueOf(d.getRecha()),
+                        d.getDenoItem(),
+                        Hl7ItemErrorOrigin.DETALLE
+                    )
+                );
+            }
+        }
+    }
+    
+    return detalles.isEmpty()
+        ? Hl7Result.ok(r)
+        : Hl7Result.partial(r, detalles);
+}
+```
+
+### Validation Flow
+
+1. **Null Check**: Verify response and cabecera exist
+2. **Header Rejection**: Check if `rechaCabecera > 0`
+   - If rejected: Return `REJECTED` status (cancellation failed)
+   - If approved: Continue to detail validation
+3. **Detail Item Validation**: Check each detail item's `recha` field
+4. **Result Determination**:
+   - All items cancelled: `OK` status
+   - Some items failed: `PARTIAL` status
+   - Header rejected: `REJECTED` status
+
+<Note>
+  A `PARTIAL` result means the cancellation transaction was created, but only some items were cancelled successfully.
+</Note>
+
+## Error Handling Scenarios
+
+### Header Rejection (Complete Failure)
+
+When the entire cancellation is rejected at the header level:
+
+```java
+if (result.getStatus() == Hl7Status.REJECTED) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Cancellation rejected:");
+    System.err.println("Code: " + error.getCode());
+    System.err.println("Reason: " + error.getMessage());
+    
+    // Original transaction remains active
+}
+```
+
+**Common rejection reasons:**
+- Transaction already cancelled
+- Transaction not found
+- Cancellation not permitted for this transaction type
+- Time window for cancellation expired
+
+### Partial Cancellation (Detail Rejections)
+
+When some items cannot be cancelled:
+
+```java
+if (result.isPartial()) {
+    CancelacionResponse response = result.getData().get();
+    List<Hl7ItemError> failedItems = result.getDetails();
+    
+    System.out.println("Cancellation transaction: " + 
+        response.getCabecera().getTransac());
+    
+    System.out.println("Items that could not be cancelled:");
+    for (Hl7ItemError item : failedItems) {
+        System.err.println("  Code: " + item.getCode());
+        System.err.println("  Reason: " + item.getMessage());
+    }
+    
+    // Some items were cancelled, others remain active
+}
+```
+
+### Complete Success
+
+All items successfully cancelled:
+
+```java
+if (result.isOk()) {
+    CancelacionResponse response = result.getData().get();
+    Long cancelTransac = response.getCabecera().getTransac();
+    
+    System.out.println("Cancellation successful!");
+    System.out.println("Cancellation transaction: " + cancelTransac);
+    
+    // Original transaction is now fully cancelled
+}
+```
+
+## Complete Usage Example
+
+```java
+import com.hl7client.model.dto.request.hl7.CancelacionRequest;
+import com.hl7client.model.dto.request.hl7.Manual;
+import com.hl7client.model.dto.response.hl7.CancelacionResponse;
+import com.hl7client.model.dto.response.hl7.CancelacionCabecera;
+import com.hl7client.model.result.Hl7Result;
+import com.hl7client.model.result.Hl7Status;
+import com.hl7client.model.result.Hl7ItemError;
+import com.hl7client.service.Hl7Service;
+
+public class CancellationExample {
+    
+    private final Hl7Service hl7Service;
+    
+    public void cancelTransaction(
+        Long credential,
+        Integer originalTransactionId,
+        String reason
+    ) {
+        // Build cancellation request
+        CancelacionRequest request = new CancelacionRequest();
+        request.setModo("N");
+        request.setCreden(credential);
+        request.setTipo(2);
+        request.setAlta("");
+        request.setManual(Manual.MANUAL);
+        
+        // Cancellation-specific fields
+        request.setTicketExt(0);
+        request.setCancelCab(originalTransactionId);
+        request.setCancelModo("N");
+        
+        // Technical data
+        request.setTermId(getTerminalId());
+        request.setInterNro(generateInterNro());
+        
+        // Provider
+        request.setCuit(getProviderCuit());
+        
+        // Reason for cancellation
+        request.setParam1(reason);
+        
+        // Execute cancellation
+        Hl7Result<CancelacionResponse> result = 
+            hl7Service.cancelarPrestacion(request);
+        
+        // Handle response
+        if (result.isOk()) {
+            handleCompleteSuccess(result.getData().get());
+            
+        } else if (result.isPartial()) {
+            handlePartialCancellation(
+                result.getData().get(),
+                result.getDetails()
+            );
+            
+        } else if (result.getStatus() == Hl7Status.REJECTED) {
+            handleRejection(
+                result.getData().get(),
+                result.getIssue().get()
+            );
+            
+        } else if (result.isError()) {
+            handleTechnicalError(result.getIssue().get());
+        }
+    }
+    
+    private void handleCompleteSuccess(CancelacionResponse response) {
+        CancelacionCabecera cab = response.getCabecera();
+        
+        System.out.println("Cancellation successful!");
+        System.out.println("Cancellation transaction: " + cab.getTransac());
+        System.out.println("Patient: " + cab.getApeNom());
+        System.out.println("PMI: " + cab.getPmi());
+        
+        // Update database to mark original transaction as cancelled
+        markTransactionAsCancelled(
+            request.getCancelCab(),
+            cab.getTransac()
+        );
+        
+        notifySuccessfulCancellation();
+    }
+    
+    private void handlePartialCancellation(
+        CancelacionResponse response,
+        List<Hl7ItemError> failedItems
+    ) {
+        CancelacionCabecera cab = response.getCabecera();
+        
+        System.out.println("Partial cancellation");
+        System.out.println("Cancellation transaction: " + cab.getTransac());
+        
+        System.out.println("\nItems that could not be cancelled:");
+        for (Hl7ItemError item : failedItems) {
+            System.err.println("  Code: " + item.getCode());
+            System.err.println("  Reason: " + item.getMessage());
+        }
+        
+        // Store cancellation transaction
+        storeCancellationTransaction(
+            request.getCancelCab(),
+            cab.getTransac(),
+            failedItems
+        );
+        
+        // Notify user about partial outcome
+        notifyPartialCancellation(failedItems.size());
+    }
+    
+    private void handleRejection(
+        CancelacionResponse response,
+        Hl7Error error
+    ) {
+        System.err.println("Cancellation rejected:");
+        System.err.println("Code: " + error.getCode());
+        System.err.println("Reason: " + error.getMessage());
+        
+        // Original transaction remains active
+        logCancellationFailure(
+            request.getCancelCab(),
+            error.getCode(),
+            error.getMessage()
+        );
+        
+        // Determine if retry is appropriate
+        if (isRetryableRejection(error.getCode())) {
+            promptRetry(error.getMessage());
+        } else {
+            notifyPermanentRejection(error.getMessage());
+        }
+    }
+    
+    private void handleTechnicalError(Hl7Error error) {
+        System.err.println("Technical error: " + error.getMessage());
+        System.err.println("Origin: " + error.getOrigin());
+        
+        if (error.isSession()) {
+            promptReauthentication();
+        } else {
+            // Network or server error - safe to retry
+            scheduleRetry();
+        }
+    }
+}
+```
+
+## Best Practices
+
+<Accordion title="Validate Transaction Before Cancellation">
+  Verify the transaction exists and is eligible for cancellation:
+  
+  ```java
+  // Check transaction exists in local database
+  Transaction original = database.getTransaction(transactionId);
+  if (original == null) {
+      throw new IllegalArgumentException(
+          "Transaction not found: " + transactionId
+      );
+  }
+  
+  // Check transaction is not already cancelled
+  if (original.isCancelled()) {
+      throw new IllegalStateException(
+          "Transaction already cancelled: " + transactionId
+      );
+  }
+  
+  // Proceed with cancellation
+  cancelarPrestacion(transactionId);
+  ```
+</Accordion>
+
+<Accordion title="Store Cancellation Transactions">
+  Always store the cancellation transaction number for audit trail:
+  
+  ```java
+  if (result.isOk() || result.isPartial()) {
+      Long originalTransac = request.getCancelCab();
+      Long cancelTransac = result.getData().get()
+          .getCabecera().getTransac();
+      
+      // Link cancellation to original
+      database.linkCancellation(
+          originalTransac,
+          cancelTransac,
+          new Date()
+      );
+  }
+  ```
+</Accordion>
+
+<Accordion title="Handle Partial Cancellations">
+  When some items cannot be cancelled, provide clear feedback:
+  
+  ```java
+  if (result.isPartial()) {
+      List<Hl7ItemError> failed = result.getDetails();
+      
+      StringBuilder message = new StringBuilder();
+      message.append("Partially cancelled. ");
+      message.append(failed.size())
+          .append(" item(s) could not be cancelled:\n");
+      
+      for (Hl7ItemError item : failed) {
+          message.append("  - ")
+              .append(item.getMessage())
+              .append("\n");
+      }
+      
+      showUserMessage(message.toString());
+  }
+  ```
+</Accordion>
+
+<Accordion title="Implement Idempotency Checks">
+  Prevent duplicate cancellation attempts:
+  
+  ```java
+  public void safeCancelTransaction(Integer transactionId) {
+      // Check if already cancelled
+      if (database.isCancelled(transactionId)) {
+          System.out.println(
+              "Transaction already cancelled: " + transactionId
+          );
+          return;
+      }
+      
+      // Attempt cancellation
+      Hl7Result<CancelacionResponse> result = 
+          cancelarPrestacion(transactionId);
+      
+      // Handle result...
+  }
+  ```
+</Accordion>
+
+<Accordion title="Log Cancellation Reasons">
+  Always document why a transaction is being cancelled:
+  
+  ```java
+  CancelacionRequest request = new CancelacionRequest();
+  // ... set required fields
+  
+  // Document the reason
+  request.setParam1("Patient requested cancellation");
+  request.setParam2("Cancelled by: Dr. Smith");
+  
+  // This helps with auditing and compliance
+  ```
+</Accordion>
+
+## Common Error Scenarios
+
+### Transaction Not Found
+
+```json
+{
+  "rechaCabecera": 404,
+  "rechaCabeDeno": "Transacción no encontrada"
+}
+```
+
+**Cause**: The `cancelCab` value doesn't reference a valid transaction.
+
+**Resolution**: Verify the transaction number is correct and exists in the system.
+
+### Transaction Already Cancelled
+
+```json
+{
+  "rechaCabecera": 409,
+  "rechaCabeDeno": "Transacción ya cancelada"
+}
+```
+
+**Cause**: Attempting to cancel a transaction that's already been cancelled.
+
+**Resolution**: Check local database status before attempting cancellation.
+
+### Cancellation Time Window Expired
+
+```json
+{
+  "rechaCabecera": 400,
+  "rechaCabeDeno": "Período de cancelación expirado"
+}
+```
+
+**Cause**: The transaction is too old to be cancelled.
+
+**Resolution**: Contact support for manual cancellation or adjustment.
+
+## See Also
+
+- [Registration](/features/registration) - Create transactions that can be cancelled
+- [Error Handling Guide](/api/result-types) - Comprehensive error handling
+- [Transaction Management](/features/registration) - Best practices for transaction lifecycle

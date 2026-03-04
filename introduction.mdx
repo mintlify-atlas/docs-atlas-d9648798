@@ -1,0 +1,164 @@
+---
+title: Introduction
+description: Healthcare provider connectivity through HL7 messaging
+---
+
+<div className="relative overflow-hidden bg-gradient-to-br from-[#1e40af] via-[#2563eb] to-[#3b82f6] dark:from-[#0f1117] dark:via-[#1a1d27] dark:to-[#1e40af] py-20">
+  <div className="max-w-6xl mx-auto px-6 lg:px-8">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+      <div className="lg:col-span-7">
+        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white dark:text-gray-100 mb-6">
+          HL7 Connectivity Providers Client
+        </h1>
+        <p className="text-lg sm:text-xl text-white/90 dark:text-gray-300 max-w-2xl mb-8">
+          A Java desktop application for healthcare providers to manage patient eligibility verification, service registration, and cancellations through HL7 messaging protocols.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <a
+            href="/quickstart"
+            className="inline-flex items-center px-6 py-3 rounded-lg bg-white dark:bg-[#1a1d27] text-[#2563eb] dark:text-[#3b82f6] font-semibold hover:bg-gray-50 dark:hover:bg-[#242838] transition-colors no-underline"
+          >
+            Get Started
+            <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
+          <a
+            href="/api/auth-service"
+            className="inline-flex items-center px-6 py-3 rounded-lg border border-white/30 bg-white/10 text-white dark:border-gray-600 dark:bg-[#1a1d27]/50 font-semibold hover:bg-white/20 dark:hover:bg-[#242838] transition-colors no-underline"
+          >
+            API Reference
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Quick Start
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Get up and running with the HL7 client in minutes
+  </p>
+
+  <Steps>
+    <Step title="Build the application">
+      Clone the repository and build the JAR file using Maven:
+      
+      ```bash
+      git clone https://github.com/deltalogan/hl7-connectivity-providers-client.git
+      cd hl7-connectivity-providers-client
+      mvn clean package
+      ```
+      
+      The build creates a shaded JAR with all dependencies at `target/connectivity-providers-client-1.0-SNAPSHOT.jar`
+    </Step>
+
+    <Step title="Launch the client">
+      Run the application with Java 8 or higher:
+      
+      ```bash
+      java -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+      ```
+      
+      The login screen will appear where you can select your environment and enter credentials.
+    </Step>
+
+    <Step title="Authenticate">
+      Enter your credentials in the login form:
+      
+      - **Email**: Your provider account email
+      - **Password**: Your account password
+      - **API Key**: Your organization's API key
+      - **Environment**: Select DEV, STAGING, or PRODUCTION
+      
+      <Info>The client automatically manages session tokens and refreshes authentication before expiration.</Info>
+    </Step>
+
+    <Step title="Process HL7 transactions">
+      Once authenticated, use the main interface to:
+      
+      - **Check eligibility**: Verify patient coverage and benefits
+      - **Register services**: Submit service claims with detailed items
+      - **Cancel registrations**: Cancel previously submitted claims
+      
+      All operations return structured HL7 responses with validation results.
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Key Features
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Everything you need for healthcare provider connectivity
+  </p>
+
+  <CardGroup cols={2}>
+    <Card title="HL7 Messaging" icon="notes-medical" href="/features/eligibility">
+      Complete implementation of eligibility, registration, and cancellation workflows with automatic error handling and validation.
+    </Card>
+    <Card title="Session Management" icon="key" href="/configuration/session-management">
+      Automatic token refresh, multi-environment support, and graceful session expiration handling for uninterrupted workflows.
+    </Card>
+    <Card title="Dental Module" icon="tooth" href="/development/dental-module">
+      Comprehensive dental benefit calculations with surface-level detail, piece tracking, and rule-based validation engine.
+    </Card>
+    <Card title="Modern UI" icon="desktop" href="/quickstart">
+      Built with FlatLaf for a native look and feel with customizable themes, date pickers, and responsive layouts.
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <h2 className="text-2xl sm:text-3xl font-semibold text-gray-900 dark:text-white mb-4">
+    Explore by Topic
+  </h2>
+  <p className="text-base text-gray-600 dark:text-gray-400 mb-8">
+    Deep dive into specific areas
+  </p>
+
+  <CardGroup cols={3}>
+    <Card title="Authentication" icon="lock" href="/features/authentication">
+      Learn how login, logout, and token refresh work
+    </Card>
+    <Card title="Configuration" icon="gear" href="/configuration/environments">
+      Configure environments and connection settings
+    </Card>
+    <Card title="Architecture" icon="sitemap" href="/development/architecture">
+      Understand the client's internal structure
+    </Card>
+    <Card title="Building" icon="hammer" href="/development/building">
+      Build and package the application
+    </Card>
+    <Card title="API Client" icon="plug" href="/api/api-client">
+      Low-level HTTP client and auth refresh
+    </Card>
+    <Card title="Result Types" icon="check-circle" href="/api/result-types">
+      Handle success, error, and partial results
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gray-50 dark:bg-[#1a1d27] p-8">
+    <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-4">
+      Ready to get started?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 mb-6">
+      Follow the quickstart guide to build and run the HL7 client in your environment.
+    </p>
+    <a
+      href="/quickstart"
+      className="inline-flex items-center px-6 py-3 rounded-lg bg-[#2563eb] hover:bg-[#1e40af] text-white font-semibold transition-colors no-underline"
+    >
+      View Quickstart Guide
+      <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </a>
+  </div>
+</div>

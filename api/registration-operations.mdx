@@ -1,0 +1,511 @@
+---
+title: Registration Operations
+description: Register medical services and procedures using HL7 messaging
+icon: file-medical
+---
+
+## Overview
+
+The registration operation records medical services, procedures, and supplies provided to patients. It supports both header-level validation and item-level detail validation, allowing for partial success scenarios.
+
+## Operation Method
+
+```java
+Hl7Result<RegistracionResponse> consultarRegistracion(RegistracionRequest request)
+```
+
+**Service Location**: `Hl7Service.java:39-50`
+
+**Endpoint URL**: Retrieved via `EnvironmentConfig.getHl7RegistracionUrl()`
+
+## Request Structure
+
+### RegistracionRequest
+
+The request contains operation parameters, technical data, provider information, and HL7 extensions.
+
+#### Operation Data Fields
+
+<ParamField path="modo" type="String" required>
+  Operation mode. Single character field (max length: 1)
+</ParamField>
+
+<ParamField path="creden" type="String" required>
+  Credential number. Fixed length: 23 characters
+</ParamField>
+
+<ParamField path="tipo" type="Integer" required>
+  Service type identifier (tinyint)
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration datetime in format: `yyyy-MM-dd'T'HH:mm:ss`
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Service date in format: `yyyy-MM-dd` (varchar 10)
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator. Enum values:
+  - `MANUAL` ("0")
+  - `CAPITADOR` ("C")
+  - `COMSULTA` ("L")
+</ParamField>
+
+<ParamField path="consulta" type="Manual">
+  Consultation mode indicator (same enum as manual)
+</ParamField>
+
+#### Technical Data Fields
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number for tracking
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier (max length: 20)
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+#### Provider Fields
+
+<ParamField path="cuit" type="String">
+  Provider CUIT tax identification (max length: 40)
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Provider registration origin (max length: 10)
+</ParamField>
+
+#### Previous Result Fields
+
+<ParamField path="autoriz" type="Integer">
+  Previous authorization number if applicable
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  Previous rejection code (smallint)
+</ParamField>
+
+#### HL7 Extended Fields
+
+<ParamField path="icd" type="String">
+  ICD diagnostic code (max length: 6)
+</ParamField>
+
+<ParamField path="param1" type="String">
+  Custom parameter 1 (max length: 255)
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Custom parameter 2 (max length: 255)
+</ParamField>
+
+<ParamField path="param3" type="String">
+  Custom parameter 3 (max length: 255)
+</ParamField>
+
+<ParamField path="tipoEfector" type="String">
+  Effector type code (max length: 4)
+</ParamField>
+
+<ParamField path="idEfector" type="String">
+  Effector identifier (max length: 11)
+</ParamField>
+
+<ParamField path="tipoPrescr" type="String">
+  Prescriber type code (max length: 4)
+</ParamField>
+
+<ParamField path="idPrescr" type="String">
+  Prescriber identifier (max length: 11)
+</ParamField>
+
+<ParamField path="msgId" type="String">
+  Message identifier (max length: 20)
+</ParamField>
+
+<ParamField path="ackacept" type="String">
+  Acknowledgment acceptance code (max length: 2)
+</ParamField>
+
+<ParamField path="ackackapl" type="String">
+  Acknowledgment application code (max length: 2)
+</ParamField>
+
+<ParamField path="tipoMensaje" type="String">
+  Message type indicator (max length: 1)
+</ParamField>
+
+<ParamField path="powerBuilder" type="Boolean">
+  PowerBuilder compatibility flag (bit)
+</ParamField>
+
+### Example Request
+
+```java
+RegistracionRequest request = new RegistracionRequest();
+request.setModo("N");
+request.setCreden("12345678901234567890123");
+request.setTipo(2);
+request.setAlta("2024-03-15T10:30:00");
+request.setFecdif("2024-03-15");
+request.setCuit("20123456789");
+request.setIcd("A00.0");
+request.setParam1("Additional info");
+
+Hl7Result<RegistracionResponse> result = hl7Service.consultarRegistracion(request);
+```
+
+## Response Structure
+
+### RegistracionResponse
+
+The response has a two-level structure: a header (cabecera) and optional detail items (detalle).
+
+<ResponseField name="cabecera" type="RegistracionCabecera" required>
+  Header information containing overall transaction data and rejection status
+</ResponseField>
+
+<ResponseField name="detalle" type="RegistracionDetalle[]">
+  Array of detail items with individual item rejection information. May be null if no detail validation is performed.
+</ResponseField>
+
+### RegistracionCabecera
+
+Header-level response data.
+
+#### Transaction Fields
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier assigned by the system
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction registration timestamp
+</ResponseField>
+
+<ResponseField name="autoriz" type="Integer">
+  Authorization number if approved
+</ResponseField>
+
+#### Rejection Fields
+
+<ResponseField name="rechaCabecera" type="Integer">
+  **Header rejection code**. If greater than 0, the entire registration is rejected at the header level.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable description of the header rejection reason
+</ResponseField>
+
+#### Member Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient sex
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Authorized sex value
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Authorized gender value
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code identifier
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+#### Provider Information
+
+<ResponseField name="icdDeno" type="String">
+  ICD code description
+</ResponseField>
+
+<ResponseField name="nomPrestad" type="String">
+  Provider name
+</ResponseField>
+
+<ResponseField name="sucursal" type="String">
+  Branch office identifier
+</ResponseField>
+
+### RegistracionDetalle
+
+Item-level detail with individual rejection tracking.
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier for this detail item
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  **Item rejection code**. If greater than 0, this specific item is rejected.
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Human-readable description of the item rejection reason
+</ResponseField>
+
+### Example Response (Full Success)
+
+```json
+{
+  "cabecera": {
+    "transac": 123456789,
+    "transacAlta": "2024-03-15T10:30:45",
+    "rechaCabecera": 0,
+    "rechaCabeDeno": null,
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321",
+    "planCodi": "PLAN001",
+    "autoriz": 555123
+  },
+  "detalle": null
+}
+```
+
+### Example Response (Header Rejected)
+
+```json
+{
+  "cabecera": {
+    "transac": 123456790,
+    "rechaCabecera": 210,
+    "rechaCabeDeno": "Credencial sin cobertura activa",
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321"
+  },
+  "detalle": null
+}
+```
+
+### Example Response (Partial Success)
+
+```json
+{
+  "cabecera": {
+    "transac": 123456791,
+    "rechaCabecera": 0,
+    "rechaCabeDeno": null,
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321",
+    "autoriz": 555124
+  },
+  "detalle": [
+    {
+      "transac": 123456791,
+      "recha": 0,
+      "denoItem": null
+    },
+    {
+      "transac": 123456791,
+      "recha": 405,
+      "denoItem": "Código de práctica no autorizado"
+    },
+    {
+      "transac": 123456791,
+      "recha": 0,
+      "denoItem": null
+    }
+  ]
+}
+```
+
+## Validation Logic
+
+The service performs two-level validation (`Hl7Service.java:131-169`):
+
+### 1. Header Validation
+
+```java
+if (cab.getRechaCabecera() != null && cab.getRechaCabecera() > 0) {
+    return Hl7Result.rejected(
+        r,
+        Hl7Error.functional(
+            String.valueOf(cab.getRechaCabecera()),
+            cab.getRechaCabeDeno()
+        )
+    );
+}
+```
+
+<Note>
+  **Header Rejection**: If `rechaCabecera > 0` in the cabecera, the entire registration is rejected. No items are processed.
+</Note>
+
+### 2. Detail Validation
+
+```java
+List<Hl7ItemError> detalles = new ArrayList<>();
+
+if (r.getDetalle() != null) {
+    for (RegistracionDetalle d : r.getDetalle()) {
+        if (d.getRecha() != null && d.getRecha() > 0) {
+            detalles.add(
+                new Hl7ItemError(
+                    String.valueOf(d.getRecha()),
+                    d.getDenoItem(),
+                    Hl7ItemErrorOrigin.DETALLE
+                )
+            );
+        }
+    }
+}
+
+return detalles.isEmpty()
+    ? Hl7Result.ok(r)
+    : Hl7Result.partial(r, detalles);
+```
+
+<Note>
+  **Partial Success**: If the header is accepted but one or more detail items have `recha > 0`, the operation returns `PARTIAL` status with a list of `Hl7ItemError` objects. Each error has `origin = DETALLE`.
+</Note>
+
+### Result Status
+
+**OK** - Complete success
+```java
+Hl7Result.ok(response)
+```
+- Header accepted: `rechaCabecera` is 0, null, or negative
+- All detail items accepted or no detail validation performed
+- Full registration processed
+
+**PARTIAL** - Partial success
+```java
+Hl7Result.partial(response, itemErrors)
+```
+- Header accepted: `rechaCabecera` is 0, null, or negative
+- One or more detail items rejected: `recha > 0`
+- Contains list of `Hl7ItemError` with origin `DETALLE`
+- Some items registered, others rejected
+
+**REJECTED** - Header rejection
+```java
+Hl7Result.rejected(response, error)
+```
+- Header rejected: `rechaCabecera > 0`
+- No items processed
+- Contains functional error with rejection details
+
+**ERROR** - Technical failure
+```java
+Hl7Result.error(error)
+```
+- Network error, invalid response, or parsing failure
+- No response data available
+
+## Handling Results
+
+### Complete Success
+
+```java
+Hl7Result<RegistracionResponse> result = hl7Service.consultarRegistracion(request);
+
+if (result.isOk()) {
+    RegistracionResponse data = result.getData().get();
+    RegistracionCabecera cab = data.getCabecera();
+    
+    System.out.println("Registration successful");
+    System.out.println("Transaction: " + cab.getTransac());
+    System.out.println("Authorization: " + cab.getAutoriz());
+    System.out.println("Patient: " + cab.getApeNom());
+}
+```
+
+### Partial Success
+
+```java
+if (result.isPartial()) {
+    RegistracionResponse data = result.getData().get();
+    List<Hl7ItemError> errors = result.getDetails();
+    
+    System.out.println("Partial registration - some items rejected:");
+    System.out.println("Transaction: " + data.getCabecera().getTransac());
+    
+    for (Hl7ItemError error : errors) {
+        System.err.println("Item error [" + error.getCode() + "]: " 
+            + error.getMessage());
+    }
+}
+```
+
+### Header Rejection
+
+```java
+if (result.getStatus() == Hl7Status.REJECTED) {
+    RegistracionResponse data = result.getData().get();
+    Hl7Error error = result.getIssue().get();
+    
+    System.err.println("Registration rejected at header level");
+    System.err.println("Rejection code: " + error.getCode());
+    System.err.println("Reason: " + error.getMessage());
+    System.err.println("Transaction: " + data.getCabecera().getTransac());
+}
+```
+
+### Technical Error
+
+```java
+if (result.isError()) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Technical error: " + error.getMessage());
+    System.err.println("Origin: " + error.getOrigin());
+}
+```
+
+## Environment Configuration
+
+The registration endpoint URL is constructed using:
+
+```java
+EnvironmentConfig.getHl7RegistracionUrl(SessionContext.getEnvironment())
+```
+
+**URL Pattern** (`EnvironmentConfig.java:57-63`):
+```
+{baseUrl}{apiContextPath}{apiVersionV3}{hl7ContextPath}/registracion
+```
+
+Example: `https://api.example.com/api/v3/hl7/registracion`
+
+## Related Operations
+
+<CardGroup cols={2}>
+  <Card title="Eligibility Operations" icon="check-circle" href="/api/eligibility-operations">
+    Check eligibility before registration
+  </Card>
+  <Card title="Cancellation Operations" icon="xmark" href="/api/cancellation-operations">
+    Cancel registered services
+  </Card>
+  <Card title="Result Types" icon="triangle-exclamation" href="/api/result-types">
+    Handle partial success and rejections
+  </Card>
+</CardGroup>

@@ -1,0 +1,303 @@
+---
+title: Eligibility Operations
+description: Check patient eligibility and coverage using HL7 messaging
+icon: check-circle
+---
+
+## Overview
+
+The eligibility operation validates patient coverage and retrieves member information from the health insurance system. This is typically the first operation performed before registering medical services.
+
+## Operation Method
+
+```java
+Hl7Result<ElegibilidadResponse> consultarElegibilidad(ElegibilidadRequest request)
+```
+
+**Service Location**: `Hl7Service.java:26-37`
+
+**Endpoint URL**: Retrieved via `EnvironmentConfig.getHl7ElegibilidadUrl()`
+
+## Request Structure
+
+### ElegibilidadRequest
+
+The request object contains operation data, technical parameters, and provider information.
+
+#### Operation Data Fields
+
+<ParamField path="modo" type="String" required>
+  Operation mode. Single character field (max length: 1)
+</ParamField>
+
+<ParamField path="creden" type="String" required>
+  Credential number. Fixed length: 19 characters
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration timestamp in format: `yyyy-MM-dd'T'HH:mm:ss`
+</ParamField>
+
+<ParamField path="fecdif" type="String">
+  Service date in format: `yyyy-MM-dd`
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator. Enum values:
+  - `MANUAL` ("0")
+  - `CAPITADOR` ("C")
+  - `COMSULTA` ("L")
+</ParamField>
+
+#### Technical Data Fields
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number for tracking
+</ParamField>
+
+<ParamField path="termId" type="String">
+  Terminal identifier
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+#### Provider Fields
+
+<ParamField path="cuit" type="String">
+  Provider CUIT (tax identification number)
+</ParamField>
+
+<ParamField path="oriMatri" type="String">
+  Provider registration origin
+</ParamField>
+
+#### Previous Result Fields
+
+<ParamField path="autoriz" type="Integer">
+  Previous authorization number if applicable
+</ParamField>
+
+<ParamField path="rechaExt" type="Integer">
+  Previous rejection code if applicable
+</ParamField>
+
+### Example Request
+
+```java
+ElegibilidadRequest request = new ElegibilidadRequest();
+request.setModo("N");
+request.setCreden("1234567890123456789");
+request.setAlta("2024-03-15T10:30:00");
+request.setFecdif("2024-03-15");
+request.setCuit("20123456789");
+
+Hl7Result<ElegibilidadResponse> result = hl7Service.consultarElegibilidad(request);
+```
+
+## Response Structure
+
+### ElegibilidadResponse
+
+The response contains member information and eligibility status.
+
+#### Member Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name (last name and first name)
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient sex
+</ResponseField>
+
+<ResponseField name="sexoAuto" type="String">
+  Authorized sex value
+</ResponseField>
+
+<ResponseField name="generoAuto" type="String">
+  Authorized gender value
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code identifier
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+#### Transaction Data
+
+<ResponseField name="transac" type="String">
+  Transaction identifier
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction registration timestamp
+</ResponseField>
+
+#### Rejection Fields
+
+<ResponseField name="rechaCabecera" type="Integer">
+  Header rejection code. **Critical**: If this value is greater than 0, the eligibility check is rejected.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable rejection description
+</ResponseField>
+
+#### Diagnostic Information
+
+<ResponseField name="icdDeno" type="String">
+  ICD code description
+</ResponseField>
+
+### Example Response (Approved)
+
+```json
+{
+  "planCodi": "PLAN001",
+  "apeNom": "DOE, JOHN",
+  "pmi": "123456789",
+  "edad": 35,
+  "sexo": "M",
+  "transac": "789456123",
+  "rechaCabecera": 0,
+  "rechaCabeDeno": null,
+  "gravado": "S",
+  "leyimp": "N"
+}
+```
+
+### Example Response (Rejected)
+
+```json
+{
+  "planCodi": "PLAN001",
+  "apeNom": "DOE, JOHN",
+  "pmi": "123456789",
+  "rechaCabecera": 105,
+  "rechaCabeDeno": "Credencial vencida",
+  "transac": "789456124"
+}
+```
+
+## Validation Logic
+
+The service validates the response using the following rules (`Hl7Service.java:111-129`):
+
+### Rejection Detection
+
+```java
+if (r.getRechaCabecera() != null && r.getRechaCabecera() > 0) {
+    return Hl7Result.rejected(
+        r,
+        Hl7Error.functional(
+            String.valueOf(r.getRechaCabecera()),
+            r.getRechaCabeDeno()
+        )
+    );
+}
+```
+
+<Note>
+  **Validation Rule**: If `rechaCabecera` is present and greater than 0, the eligibility check is considered rejected. The rejection code and description are available in `rechaCabecera` and `rechaCabeDeno` respectively.
+</Note>
+
+### Result Status
+
+The operation returns an `Hl7Result<ElegibilidadResponse>` with the following possible statuses:
+
+**OK** - Eligibility confirmed
+```java
+Hl7Result.ok(response)
+```
+- `rechaCabecera` is null, 0, or negative
+- Patient is eligible for services
+- Response data contains valid member information
+
+**REJECTED** - Eligibility denied
+```java
+Hl7Result.rejected(response, error)
+```
+- `rechaCabecera > 0`
+- Response includes rejection code and description
+- Contains functional error with rejection details
+
+**ERROR** - Technical failure
+```java
+Hl7Result.error(error)
+```
+- Network error, invalid response, or parsing failure
+- No response data available
+- Contains technical error details
+
+## Handling Results
+
+```java
+Hl7Result<ElegibilidadResponse> result = hl7Service.consultarElegibilidad(request);
+
+if (result.isOk()) {
+    // Eligibility confirmed
+    ElegibilidadResponse data = result.getData().get();
+    System.out.println("Patient: " + data.getApeNom());
+    System.out.println("Plan: " + data.getPlanCodi());
+    System.out.println("PMI: " + data.getPmi());
+    
+} else if (result.getStatus() == Hl7Status.REJECTED) {
+    // Eligibility rejected by system
+    ElegibilidadResponse data = result.getData().get();
+    Hl7Error error = result.getIssue().get();
+    
+    System.err.println("Rejection code: " + error.getCode());
+    System.err.println("Reason: " + error.getMessage());
+    System.err.println("Patient: " + data.getApeNom());
+    
+} else if (result.isError()) {
+    // Technical error
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Technical error: " + error.getMessage());
+}
+```
+
+## Environment Configuration
+
+The eligibility endpoint URL is constructed using:
+
+```java
+EnvironmentConfig.getHl7ElegibilidadUrl(SessionContext.getEnvironment())
+```
+
+**URL Pattern** (`EnvironmentConfig.java:49-55`):
+```
+{baseUrl}{apiContextPath}{apiVersionV3}{hl7ContextPath}/elegibilidad
+```
+
+Example: `https://api.example.com/api/v3/hl7/elegibilidad`
+
+## Related Operations
+
+<CardGroup cols={2}>
+  <Card title="Registration Operations" icon="file-medical" href="/api/registration-operations">
+    Register services after confirming eligibility
+  </Card>
+  <Card title="Result Types" icon="triangle-exclamation" href="/api/result-types">
+    Handle HL7 errors and rejections
+  </Card>
+</CardGroup>

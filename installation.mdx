@@ -1,0 +1,557 @@
+---
+title: 'Installation'
+description: 'Complete installation and deployment guide for the HL7 Connectivity Providers Client'
+---
+
+## System Requirements
+
+### Java Runtime
+
+The application requires Java 8 or higher:
+
+<CodeGroup>
+```bash Check Java Version
+java -version
+```
+
+```bash Set JAVA_HOME (Linux/Mac)
+export JAVA_HOME=/path/to/jdk
+export PATH=$JAVA_HOME/bin:$PATH
+```
+
+```powershell Set JAVA_HOME (Windows)
+setx JAVA_HOME "C:\Program Files\Java\jdk1.8.0_xxx"
+setx PATH "%JAVA_HOME%\bin;%PATH%"
+```
+</CodeGroup>
+
+<Info>
+  The application is compiled with Java 8 target compatibility (`maven.compiler.source=1.8`) to ensure broad compatibility across environments.
+</Info>
+
+### Build Tools
+
+Apache Maven 3.6 or higher is required for building from source:
+
+<CodeGroup>
+```bash Install Maven (Linux - apt)
+sudo apt update
+sudo apt install maven
+```
+
+```bash Install Maven (Mac - Homebrew)
+brew install maven
+```
+
+```bash Verify Maven Installation
+mvn -version
+```
+</CodeGroup>
+
+### System Resources
+
+- **RAM**: Minimum 512MB (recommended for JNLP deployment)
+- **Disk Space**: ~50MB for the application and dependencies
+- **Network**: Outbound HTTPS access to API endpoints
+
+## Dependencies Overview
+
+The application uses the following core dependencies:
+
+### UI Framework
+
+**FlatLaf (v3.7)** - Modern look and feel for Swing applications
+
+```xml
+<!-- From pom.xml:20 -->
+<dependency>
+    <groupId>com.formdev</groupId>
+    <artifactId>flatlaf</artifactId>
+    <version>3.7</version>
+</dependency>
+<dependency>
+    <groupId>com.formdev</groupId>
+    <artifactId>flatlaf-extras</artifactId>
+    <version>3.7</version>
+</dependency>
+```
+
+### Date/Time Handling
+
+**LGoodDatePicker (v11.2.1)** - Enhanced date picker component
+
+```xml
+<!-- From pom.xml:33 -->
+<dependency>
+    <groupId>com.github.lgooddatepicker</groupId>
+    <artifactId>LGoodDatePicker</artifactId>
+    <version>11.2.1</version>
+</dependency>
+```
+
+### JSON Processing
+
+**Jackson (v2.16.0)** - JSON serialization and deserialization
+
+```xml
+<!-- From pom.xml:39 -->
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.16.0</version>
+</dependency>
+```
+
+### HTTP Client
+
+**Apache HttpClient (v4.5.14)** - HTTP communication with the API
+
+```xml
+<!-- From pom.xml:46 -->
+<dependency>
+    <groupId>org.apache.httpcomponents</groupId>
+    <artifactId>httpclient</artifactId>
+    <version>4.5.14</version>
+</dependency>
+<dependency>
+    <groupId>commons-codec</groupId>
+    <artifactId>commons-codec</artifactId>
+    <version>1.17.1</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.httpcomponents</groupId>
+    <artifactId>httpmime</artifactId>
+    <version>4.5.14</version>
+</dependency>
+```
+
+<Note>
+  Apache HttpClient 4.5.x series is used for Java 8 compatibility. The `commons-codec` version is explicitly set to 1.17.1 to resolve security vulnerability WS-2019-0379.
+</Note>
+
+### Testing
+
+**JUnit Jupiter (v5.10.0)** - Unit testing framework
+
+```xml
+<!-- From pom.xml:66 -->
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter</artifactId>
+    <version>5.10.0</version>
+    <scope>test</scope>
+</dependency>
+```
+
+## Building from Source
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone <repository-url>
+    cd connectivity-providers-client
+    ```
+  </Step>
+
+  <Step title="Build with Maven">
+    Execute the Maven package phase to compile and build the shaded JAR:
+
+    ```bash
+    mvn clean package
+    ```
+
+    This command performs:
+    - Source code compilation (Java 8 target)
+    - Unit test execution
+    - JAR packaging with all dependencies
+    - Manifest configuration with main class
+  </Step>
+
+  <Step title="Locate the Output">
+    The build produces the executable JAR in the `target/` directory:
+
+    ```bash
+    ls -lh target/connectivity-providers-client-1.0-SNAPSHOT.jar
+    ```
+  </Step>
+</Steps>
+
+## Maven Shade Plugin Configuration
+
+The application uses the maven-shade-plugin to create an uber JAR (fat JAR) containing all dependencies:
+
+```xml
+<!-- From pom.xml:83 -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-shade-plugin</artifactId>
+    <version>3.6.0</version>
+    <executions>
+        <execution>
+            <phase>package</phase>
+            <goals>
+                <goal>shade</goal>
+            </goals>
+            <configuration>
+                <transformers>
+                    <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                        <mainClass>com.hl7client.Main</mainClass>
+                    </transformer>
+                </transformers>
+                <!-- Avoid signature conflicts -->
+                <filters>
+                    <filter>
+                        <artifact>*:*</artifact>
+                        <excludes>
+                            <exclude>META-INF/*.SF</exclude>
+                            <exclude>META-INF/*.DSA</exclude>
+                            <exclude>META-INF/*.RSA</exclude>
+                        </excludes>
+                    </filter>
+                </filters>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+### What Does the Shade Plugin Do?
+
+<AccordionGroup>
+  <Accordion title="Creates a Single Executable JAR">
+    Combines all dependencies into one JAR file, eliminating the need for separate library files or classpath configuration.
+  </Accordion>
+
+  <Accordion title="Sets the Main Class">
+    Configures `com.hl7client.Main` as the entry point in the JAR manifest, allowing execution with `java -jar`.
+  </Accordion>
+
+  <Accordion title="Removes Signature Files">
+    Excludes `META-INF/*.SF`, `*.DSA`, and `*.RSA` files to prevent signature verification conflicts when merging signed JARs.
+  </Accordion>
+
+  <Accordion title="Simplifies Deployment">
+    Produces a single artifact that can be distributed and executed without complex setup.
+  </Accordion>
+</AccordionGroup>
+
+## Running the Application
+
+### Standard Execution
+
+Run the JAR file directly:
+
+```bash
+java -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+```
+
+### With Custom Memory Settings
+
+For larger datasets or extended usage:
+
+```bash
+java -Xmx1024m -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+```
+
+### Development Mode
+
+Run directly from Maven without building the JAR:
+
+```bash
+mvn exec:java -Dexec.mainClass="com.hl7client.Main"
+```
+
+## JNLP Deployment (Java Web Start)
+
+For enterprise deployment, the application supports Java Network Launch Protocol (JNLP):
+
+### JNLP Configuration
+
+```xml
+<!-- From hl7-client.jnlp:2 -->
+<?xml version="1.0" encoding="utf-8"?>
+<jnlp spec="1.0+"
+      codebase="http://prd-svc1:8090/hl7client/"
+      href="hl7-client.jnlp">
+    <information>
+        <title>HL7 Connectivity Client - Swiss Medical</title>
+        <vendor>Swiss Medical SA</vendor>
+        <homepage href="http://prd-svc1:8090/"/>
+        <description>Cliente desktop para integraciones HL7 con proveedores</description>
+        <description kind="short">Aplicación de conectividad HL7</description>
+        <offline-allowed/>
+        <icon href="hl7-icon.png"/>
+    </information>
+    <security>
+        <all-permissions/>
+    </security>
+    <resources>
+        <!-- Requires Java 8u40 or higher -->
+        <j2se version="1.8.0_40+" java-vm-args="-Xmx512m"/>
+        <!-- The uber JAR with all dependencies -->
+        <jar href="connectivity-providers-client-1.0-SNAPSHOT.jar" main="true"/>
+    </resources>
+    <application-desc main-class="com.hl7client.Main">
+        <!-- Optional: pass arguments to main method -->
+    </application-desc>
+    <!-- Automatic updates -->
+    <update check="background" policy="always"/>
+</jnlp>
+```
+
+### JNLP Deployment Steps
+
+<Steps>
+  <Step title="Build the Application">
+    ```bash
+    mvn clean package
+    ```
+  </Step>
+
+  <Step title="Prepare Web Server Directory">
+    Create a directory on your web server:
+    ```bash
+    mkdir -p /var/www/html/hl7client
+    ```
+  </Step>
+
+  <Step title="Copy Files to Server">
+    ```bash
+    cp target/connectivity-providers-client-1.0-SNAPSHOT.jar /var/www/html/hl7client/
+    cp hl7-client.jnlp /var/www/html/hl7client/
+    # Optional: add icon
+    cp resources/hl7-icon.png /var/www/html/hl7client/
+    ```
+  </Step>
+
+  <Step title="Configure MIME Type">
+    Ensure your web server serves `.jnlp` files with the correct MIME type:
+
+    **Apache** (`/etc/apache2/mime.types`):
+    ```
+    application/x-java-jnlp-file jnlp
+    ```
+
+    **Nginx** (`/etc/nginx/mime.types`):
+    ```
+    application/x-java-jnlp-file jnlp;
+    ```
+  </Step>
+
+  <Step title="Update Codebase URL">
+    Edit `hl7-client.jnlp` to point to your server:
+    ```xml
+    <jnlp spec="1.0+"
+          codebase="http://your-server:port/hl7client/"
+          href="hl7-client.jnlp">
+    ```
+  </Step>
+
+  <Step title="Launch from Browser">
+    Users can launch the application by navigating to:
+    ```
+    http://your-server:port/hl7client/hl7-client.jnlp
+    ```
+  </Step>
+</Steps>
+
+### JNLP Benefits
+
+<CardGroup cols={2}>
+  <Card title="Automatic Updates" icon="arrows-rotate">
+    The application automatically checks for updates and downloads new versions
+  </Card>
+  <Card title="Central Deployment" icon="server">
+    Deploy once on the server, users always get the latest version
+  </Card>
+  <Card title="Offline Support" icon="wifi-slash">
+    Cached locally for offline usage after first launch
+  </Card>
+  <Card title="Easy Distribution" icon="share-nodes">
+    Users launch via a simple URL, no manual installation needed
+  </Card>
+</CardGroup>
+
+<Warning>
+  Java Web Start was deprecated in Java 9 and removed in Java 11. For JNLP deployment, ensure users have Java 8 installed. Consider alternative deployment methods for Java 11+ environments.
+</Warning>
+
+## Project Structure
+
+```
+connectivity-providers-client/
+├── pom.xml                          # Maven configuration
+├── hl7-client.jnlp                 # JNLP deployment descriptor
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   └── com/hl7client/
+│   │   │       ├── Main.java       # Application entry point
+│   │   │       ├── Application.java # Application lifecycle
+│   │   │       ├── client/         # HTTP client layer
+│   │   │       ├── config/         # Environment & session config
+│   │   │       ├── controller/     # UI controllers
+│   │   │       ├── model/          # Data models and DTOs
+│   │   │       ├── service/        # Business logic layer
+│   │   │       ├── ui/             # Swing UI components
+│   │   │       └── util/           # Utility classes
+│   │   └── resources/
+│   │       └── application.properties
+│   └── test/
+│       └── java/
+└── target/                         # Build output directory
+    └── connectivity-providers-client-1.0-SNAPSHOT.jar
+```
+
+## Compiler Configuration
+
+The project is configured for Java 8 compatibility:
+
+```xml
+<!-- From pom.xml:11 -->
+<properties>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <httpclient.version>4.5.14</httpclient.version>
+</properties>
+```
+
+## Manifest Configuration
+
+Build metadata is embedded in the JAR manifest:
+
+```xml
+<!-- From pom.xml:115 -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-jar-plugin</artifactId>
+    <version>3.3.0</version>
+    <configuration>
+        <archive>
+            <manifest>
+                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+            </manifest>
+        </archive>
+    </configuration>
+</plugin>
+```
+
+This includes version information accessible at runtime via `Package.getImplementationVersion()`.
+
+## Verification
+
+After installation, verify the setup:
+
+<Steps>
+  <Step title="Check JAR Contents">
+    ```bash
+    jar -tf target/connectivity-providers-client-1.0-SNAPSHOT.jar | head -20
+    ```
+  </Step>
+
+  <Step title="Verify Main Class">
+    ```bash
+    jar -xf target/connectivity-providers-client-1.0-SNAPSHOT.jar META-INF/MANIFEST.MF
+    cat META-INF/MANIFEST.MF
+    ```
+
+    Should show:
+    ```
+    Main-Class: com.hl7client.Main
+    ```
+  </Step>
+
+  <Step title="Test Launch">
+    ```bash
+    java -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+    ```
+
+    The login window should appear.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Build Issues
+
+**Problem**: Maven cannot download dependencies
+
+```bash
+# Check Maven settings
+cat ~/.m2/settings.xml
+
+# Force dependency update
+mvn clean install -U
+
+# Use verbose mode for diagnostics
+mvn clean package -X
+```
+
+**Problem**: Compiler version mismatch
+
+```bash
+# Verify Java version
+java -version
+javac -version
+
+# Check JAVA_HOME
+echo $JAVA_HOME
+
+# Explicitly set Java version for Maven
+mvn clean package -Djava.version=1.8
+```
+
+### Runtime Issues
+
+**Problem**: `NoClassDefFoundError` when running JAR
+
+<Note>
+  This typically means the shaded JAR was not built correctly. Rebuild with:
+  ```bash
+  mvn clean package
+  ```
+  Ensure the shade plugin executed successfully in the build log.
+</Note>
+
+**Problem**: UI doesn't appear or looks broken
+
+```bash
+# Run with UI debugging
+java -Dswing.defaultlaf=javax.swing.plaf.metal.MetalLookAndFeel -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+
+# Check for FlatLaf initialization
+java -verbose:class -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar 2>&1 | grep -i flatlaf
+```
+
+### JNLP Issues
+
+**Problem**: JNLP file won't launch
+
+- Ensure Java 8 is installed and Web Start is available
+- Check the codebase URL is accessible
+- Verify MIME type configuration on the web server
+- Check Java security settings (Java Control Panel)
+
+**Problem**: Security warnings when launching
+
+- The JAR must be signed for production use
+- Add the server URL to Java's exception site list (not recommended for production)
+- Use a valid code signing certificate
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Complete walkthrough from setup to first transaction
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/environments">
+    Configure API endpoints, environments, and application settings
+  </Card>
+  <Card title="Development" icon="code" href="/development/architecture">
+    Set up development environment and contribute to the project
+  </Card>
+  <Card title="Building" icon="cloud-arrow-up" href="/development/building">
+    Build and package the application
+  </Card>
+</CardGroup>

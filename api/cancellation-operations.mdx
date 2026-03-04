@@ -1,0 +1,448 @@
+---
+title: Cancellation Operations
+description: Cancel previously registered medical services using HL7 messaging
+icon: xmark
+---
+
+## Overview
+
+The cancellation operation reverses previously registered medical services and procedures. Like registration, it supports both header-level and item-level validation, allowing for partial cancellation scenarios.
+
+## Operation Method
+
+```java
+Hl7Result<CancelacionResponse> cancelarPrestacion(CancelacionRequest request)
+```
+
+**Service Location**: `Hl7Service.java:52-63`
+
+**Endpoint URL**: Retrieved via `EnvironmentConfig.getHl7CancelacionUrl()`
+
+## Request Structure
+
+### CancelacionRequest
+
+The request contains operation data, cancellation-specific fields, technical parameters, and provider information.
+
+#### Operation Data Fields
+
+<ParamField path="modo" type="String" required>
+  Operation mode. Typically "N" for new cancellation (max length: 1)
+</ParamField>
+
+<ParamField path="creden" type="Long" required>
+  Credential number as Long. Example: `7180171001151`
+</ParamField>
+
+<ParamField path="tipo" type="Integer" required>
+  Service type identifier. Example: `2`
+</ParamField>
+
+<ParamField path="alta" type="String">
+  Registration datetime. May be empty for cancellations
+</ParamField>
+
+<ParamField path="manual" type="Manual">
+  Manual processing indicator. Enum values:
+  - `MANUAL` ("0")
+  - `CAPITADOR` ("C")
+  - `COMSULTA` ("L")
+</ParamField>
+
+#### Cancellation-Specific Fields
+
+<ParamField path="ticketExt" type="Integer">
+  External ticket number. Typically `0` for cancellations
+</ParamField>
+
+<ParamField path="cancelCab" type="Integer">
+  Cancellation header identifier. Nullable.
+</ParamField>
+
+<ParamField path="cancelModo" type="String">
+  Cancellation mode. Typically "N" (max length: varies)
+</ParamField>
+
+<ParamField path="errorExt" type="Integer">
+  External error code if applicable. Nullable.
+</ParamField>
+
+#### Technical Data Fields
+
+<ParamField path="termId" type="String">
+  Terminal identifier
+</ParamField>
+
+<ParamField path="interNro" type="Integer">
+  Internal transaction number
+</ParamField>
+
+#### Provider Fields
+
+<ParamField path="cuit" type="Long">
+  Provider CUIT tax identification as Long
+</ParamField>
+
+#### HL7 Free Parameters
+
+<ParamField path="param1" type="String">
+  Custom parameter 1 for additional data
+</ParamField>
+
+<ParamField path="param2" type="String">
+  Custom parameter 2 for additional data
+</ParamField>
+
+### Example Request
+
+```java
+CancelacionRequest request = new CancelacionRequest();
+request.setModo("N");
+request.setCreden(7180171001151L);
+request.setTipo(2);
+request.setTicketExt(0);
+request.setCancelModo("N");
+request.setCuit(20123456789L);
+request.setTermId("TERM001");
+
+Hl7Result<CancelacionResponse> result = hl7Service.cancelarPrestacion(request);
+```
+
+## Response Structure
+
+### CancelacionResponse
+
+The response has a two-level structure identical to registration: a header (cabecera) and optional detail items (detalle).
+
+<ResponseField name="cabecera" type="CancelacionCabecera" required>
+  Header information containing overall cancellation transaction data and rejection status
+</ResponseField>
+
+<ResponseField name="detalle" type="CancelacionDetalle[]">
+  Array of detail items with individual item rejection information. May be null if no detail validation is performed.
+</ResponseField>
+
+### CancelacionCabecera
+
+Header-level response data for the cancellation.
+
+#### Transaction Fields
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier for the cancellation
+</ResponseField>
+
+<ResponseField name="transacAlta" type="String">
+  Transaction registration timestamp
+</ResponseField>
+
+#### Rejection Fields
+
+<ResponseField name="rechaCabecera" type="Integer">
+  **Header rejection code**. If greater than 0, the entire cancellation is rejected at the header level.
+</ResponseField>
+
+<ResponseField name="rechaCabeDeno" type="String">
+  Human-readable description of the header rejection reason
+</ResponseField>
+
+#### Member Information
+
+<ResponseField name="apeNom" type="String">
+  Patient's full name
+</ResponseField>
+
+<ResponseField name="pmi" type="String">
+  Patient Medical Identifier
+</ResponseField>
+
+<ResponseField name="edad" type="Integer">
+  Patient age
+</ResponseField>
+
+<ResponseField name="sexo" type="String">
+  Patient sex
+</ResponseField>
+
+#### Coverage Information
+
+<ResponseField name="planCodi" type="String">
+  Plan code identifier
+</ResponseField>
+
+<ResponseField name="gravado" type="String">
+  Tax status indicator
+</ResponseField>
+
+<ResponseField name="leyimp" type="String">
+  Tax law applicability
+</ResponseField>
+
+### CancelacionDetalle
+
+Item-level detail with individual cancellation rejection tracking.
+
+<ResponseField name="transac" type="Long">
+  Transaction identifier for this detail item
+</ResponseField>
+
+<ResponseField name="recha" type="Integer">
+  **Item rejection code**. If greater than 0, this specific item cancellation is rejected.
+</ResponseField>
+
+<ResponseField name="denoItem" type="String">
+  Human-readable description of the item rejection reason
+</ResponseField>
+
+### Example Response (Full Success)
+
+```json
+{
+  "cabecera": {
+    "transac": 987654321,
+    "transacAlta": "2024-03-15T11:45:30",
+    "rechaCabecera": 0,
+    "rechaCabeDeno": null,
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321",
+    "planCodi": "PLAN001"
+  },
+  "detalle": null
+}
+```
+
+### Example Response (Header Rejected)
+
+```json
+{
+  "cabecera": {
+    "transac": 987654322,
+    "rechaCabecera": 310,
+    "rechaCabeDeno": "Prestación ya cancelada previamente",
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321"
+  },
+  "detalle": null
+}
+```
+
+### Example Response (Partial Success)
+
+```json
+{
+  "cabecera": {
+    "transac": 987654323,
+    "rechaCabecera": 0,
+    "rechaCabeDeno": null,
+    "apeNom": "DOE, JOHN",
+    "pmi": "987654321"
+  },
+  "detalle": [
+    {
+      "transac": 987654323,
+      "recha": 0,
+      "denoItem": null
+    },
+    {
+      "transac": 987654323,
+      "recha": 505,
+      "denoItem": "Item fuera del período de cancelación permitido"
+    }
+  ]
+}
+```
+
+## Validation Logic
+
+The cancellation validation follows the same two-level pattern as registration (`Hl7Service.java:171-209`):
+
+### 1. Header Validation
+
+```java
+if (cab.getRechaCabecera() != null && cab.getRechaCabecera() > 0) {
+    return Hl7Result.rejected(
+        r,
+        Hl7Error.functional(
+            String.valueOf(cab.getRechaCabecera()),
+            cab.getRechaCabeDeno()
+        )
+    );
+}
+```
+
+<Note>
+  **Header Rejection**: If `rechaCabecera > 0` in the cabecera, the entire cancellation is rejected. No items are cancelled.
+</Note>
+
+### 2. Detail Validation
+
+```java
+List<Hl7ItemError> detalles = new ArrayList<>();
+
+if (r.getDetalle() != null) {
+    for (CancelacionDetalle d : r.getDetalle()) {
+        if (d.getRecha() != null && d.getRecha() > 0) {
+            detalles.add(
+                new Hl7ItemError(
+                    String.valueOf(d.getRecha()),
+                    d.getDenoItem(),
+                    Hl7ItemErrorOrigin.DETALLE
+                )
+            );
+        }
+    }
+}
+
+return detalles.isEmpty()
+    ? Hl7Result.ok(r)
+    : Hl7Result.partial(r, detalles);
+```
+
+<Note>
+  **Partial Success**: If the header is accepted but one or more detail items have `recha > 0`, the operation returns `PARTIAL` status. Each rejected item is tracked with `Hl7ItemError` having `origin = DETALLE`.
+</Note>
+
+### Result Status
+
+**OK** - Complete success
+```java
+Hl7Result.ok(response)
+```
+- Header accepted: `rechaCabecera` is 0, null, or negative
+- All detail items cancelled or no detail validation performed
+- Full cancellation processed
+
+**PARTIAL** - Partial success
+```java
+Hl7Result.partial(response, itemErrors)
+```
+- Header accepted: `rechaCabecera` is 0, null, or negative
+- One or more detail items rejected: `recha > 0`
+- Contains list of `Hl7ItemError` with origin `DETALLE`
+- Some items cancelled, others rejected
+
+**REJECTED** - Header rejection
+```java
+Hl7Result.rejected(response, error)
+```
+- Header rejected: `rechaCabecera > 0`
+- No items processed
+- Contains functional error with rejection details
+
+**ERROR** - Technical failure
+```java
+Hl7Result.error(error)
+```
+- Network error, invalid response, or parsing failure
+- No response data available
+
+## Handling Results
+
+### Complete Success
+
+```java
+Hl7Result<CancelacionResponse> result = hl7Service.cancelarPrestacion(request);
+
+if (result.isOk()) {
+    CancelacionResponse data = result.getData().get();
+    CancelacionCabecera cab = data.getCabecera();
+    
+    System.out.println("Cancellation successful");
+    System.out.println("Transaction: " + cab.getTransac());
+    System.out.println("Patient: " + cab.getApeNom());
+}
+```
+
+### Partial Success
+
+```java
+if (result.isPartial()) {
+    CancelacionResponse data = result.getData().get();
+    List<Hl7ItemError> errors = result.getDetails();
+    
+    System.out.println("Partial cancellation - some items not cancelled:");
+    System.out.println("Transaction: " + data.getCabecera().getTransac());
+    
+    for (Hl7ItemError error : errors) {
+        System.err.println("Item error [" + error.getCode() + "]: " 
+            + error.getMessage());
+    }
+}
+```
+
+### Header Rejection
+
+```java
+if (result.getStatus() == Hl7Status.REJECTED) {
+    CancelacionResponse data = result.getData().get();
+    Hl7Error error = result.getIssue().get();
+    
+    System.err.println("Cancellation rejected at header level");
+    System.err.println("Rejection code: " + error.getCode());
+    System.err.println("Reason: " + error.getMessage());
+}
+```
+
+### Technical Error
+
+```java
+if (result.isError()) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Technical error: " + error.getMessage());
+    System.err.println("Origin: " + error.getOrigin());
+}
+```
+
+## Environment Configuration
+
+The cancellation endpoint URL is constructed using:
+
+```java
+EnvironmentConfig.getHl7CancelacionUrl(SessionContext.getEnvironment())
+```
+
+**URL Pattern** (`EnvironmentConfig.java:65-70`):
+```
+{baseUrl}{apiContextPath}{apiVersionV2}/prestadores/hl7/cancela-prestacion
+```
+
+<Note>
+  **Version Difference**: Note that cancellation uses API version **v2**, while eligibility and registration use **v3**.
+</Note>
+
+Example: `https://api.example.com/api/v2/prestadores/hl7/cancela-prestacion`
+
+## Common Cancellation Scenarios
+
+### Scenario 1: Cancel Entire Service
+
+When cancelling a complete service transaction:
+- Provide the original transaction identifier
+- Set `modo` and `cancelModo` to "N"
+- If successful, all items are cancelled
+
+### Scenario 2: Partial Cancellation Not Allowed
+
+If a service item is outside the cancellation window:
+- Header accepted with `rechaCabecera = 0`
+- Specific items rejected in `detalle` array
+- Result status: `PARTIAL`
+- Review `denoItem` for rejection reasons
+
+### Scenario 3: Already Cancelled
+
+Attempting to cancel a previously cancelled service:
+- Header rejected with specific code (e.g., 310)
+- `rechaCabeDeno`: "Prestación ya cancelada previamente"
+- Result status: `REJECTED`
+
+## Related Operations
+
+<CardGroup cols={2}>
+  <Card title="Registration Operations" icon="file-medical" href="/api/registration-operations">
+    View the registration flow that precedes cancellation
+  </Card>
+  <Card title="Result Types" icon="triangle-exclamation" href="/api/result-types">
+    Handle partial cancellations and rejections
+  </Card>
+</CardGroup>

@@ -1,80 +1,304 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart Guide'
+description: 'Get up and running with the HL7 Connectivity Providers Client in minutes'
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+The HL7 Connectivity Providers Client is a Java Swing desktop application that enables healthcare providers to integrate with HL7 services. This guide will walk you through setting up, building, and running your first HL7 transaction.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+Before you begin, ensure you have:
+
+- Java Development Kit (JDK) 8 or higher
+- Apache Maven 3.6+
+- Git (for cloning the repository)
+- Valid API credentials (email, password, and API key)
+- Access to one of the environments: DEV, QA, PRE, or PRD
+
+## Quick Setup
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the source code to your local machine:
+
+    ```bash
+    git clone <repository-url>
+    cd connectivity-providers-client
+    ```
+  </Step>
+
+  <Step title="Build the Application">
+    Use Maven to compile and package the application into an executable JAR:
+
+    ```bash
+    mvn clean package
+    ```
+
+    This command:
+    - Compiles all Java source files
+    - Runs the test suite
+    - Creates a shaded (uber) JAR with all dependencies included
+    - Outputs the JAR to `target/connectivity-providers-client-1.0-SNAPSHOT.jar`
+
+    <Info>
+      The build process uses the `maven-shade-plugin` to create a single executable JAR file containing all dependencies. This makes deployment and distribution much easier.
+    </Info>
+  </Step>
+
+  <Step title="Run the Application">
+    Launch the application using Java:
+
+    ```bash
+    java -jar target/connectivity-providers-client-1.0-SNAPSHOT.jar
+    ```
+
+    Or use the Maven exec plugin:
+
+    ```bash
+    mvn exec:java -Dexec.mainClass="com.hl7client.Main"
+    ```
+
+    The application will start and display the login screen.
+  </Step>
+
+  <Step title="Login to the System">
+    On the login screen, provide:
+
+    - **Email**: Your user email address
+    - **Password**: Your account password
+    - **API Key**: Your organization's API key
+    - **Environment**: Select from DEV, QA, PRE, or PRD
+
+    Click the login button to authenticate.
+
+    <Note>
+      The authentication process creates a device token and establishes a session. The application automatically handles token refresh to maintain your session.
+    </Note>
+  </Step>
+
+  <Step title="Perform Your First Transaction">
+    Once logged in, you can perform HL7 transactions:
+
+    - **Elegibilidad**: Check patient eligibility
+    - **Registracion**: Register a service provision
+    - **Cancelacion**: Cancel a previously registered service
+
+    Select the transaction type, fill in the required fields, and submit.
+  </Step>
+</Steps>
+
+## Understanding the Login Flow
+
+The authentication process follows this sequence:
+
+```java
+// From AuthService.java:36
+public void login(
+        String email,
+        char[] password,
+        String apiKey,
+        Environment environment
+) {
+    // Create unique device identifier
+    DeviceRequest device = createDevice();
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    // Build login request
+    LoginRequest request = new LoginRequest(
+            apiKey,
+            email,
+            new String(password),
+            device
+    );
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    // Send authentication request
+    String url = EnvironmentConfig.getAuthUrl(environment);
+    ApiResponse response = apiClient.post(url, jsonRequest, headers);
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    // Parse response and initialize session
+    LoginResponse loginResponse =
+            JsonUtil.fromJson(response.getBody(), LoginResponse.class);
+    
+    initializeSession(loginResponse, environment, device);
+}
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+### Session Management
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+The application maintains your session through:
 
-### Step 3: Go live
+1. **SessionContext**: Stores authentication token, environment, and user data
+2. **SessionRefreshManager**: Automatically refreshes your token before expiration
+3. **AuthRefresher**: Handles token refresh logic from `AuthService.java:95`
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```java
+// From LoginController.java:42
+public Hl7Result<Void> login(
+        String email,
+        char[] password,
+        String apiKey,
+        String environment
+) {
+    try {
+        Environment env = Environment.valueOf(environment);
+        authService.login(email, password, apiKey, env);
+        
+        // Clear sensitive data from memory
+        clearPassword(password);
+        
+        if (loginListener != null) {
+            loginListener.onLoginSuccess();
+        }
+        
+        return Hl7Result.ok(null);
+        
+    } catch (Exception e) {
+        return Hl7Result.error(
+            Hl7Error.technical(
+                e.getMessage(),
+                Hl7ErrorOrigin.TRANSPORTE
+            )
+        );
+    }
+}
+```
 
-## Next steps
+## Making Your First HL7 Request
 
-Now that you have your docs running, explore these key features:
+Here's how to perform an eligibility check:
+
+```java
+// From Hl7Service.java:26
+public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+        ElegibilidadRequest request
+) {
+    return postHl7(
+            EnvironmentConfig.getHl7ElegibilidadUrl(
+                    SessionContext.getEnvironment()
+            ),
+            request,
+            ElegibilidadResponse.class,
+            this::validarElegibilidad
+    );
+}
+```
+
+The controller layer provides additional validation:
+
+```java
+// From Hl7Controller.java:18
+public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+        ElegibilidadRequest request
+) {
+    if (request == null) {
+        return errorRequestInvalido("ElegibilidadRequest");
+    }
+    return hl7Service.consultarElegibilidad(request);
+}
+```
+
+## Application Startup Process
+
+The application bootstraps in the following order:
+
+```java
+// From Main.java:11
+public static void main(String[] args) {
+    // Load dental data catalog
+    com.hl7client.model.dental.DentalDataLoader.loadAll();
+    
+    // Start application on Swing EDT
+    SwingUtilities.invokeLater(() -> {
+        try {
+            new Application().start();
+        } catch (Exception e) {
+            showFatalError(e);
+        }
+    });
+}
+```
+
+```java
+// From Application.java:26
+public void start() {
+    // Initialize FlatLaf theme
+    ThemeManager.getInstance().initialize();
+    
+    // Display login window
+    openLogin();
+}
+```
+
+## Environment Configuration
+
+The application supports four environments:
+
+```java
+// From Environment.java:3
+public enum Environment {
+    DEV,   // Development
+    QA,    // Quality Assurance
+    PRE,   // Pre-production
+    PRD    // Production
+}
+```
+
+Each environment has its own base URL configuration managed by `EnvironmentConfig.java:12`, which constructs endpoint URLs dynamically based on the selected environment.
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Installation Details" icon="download" href="/installation">
+    Learn about system requirements, dependencies, and deployment options
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/environments">
+    Configure environments, API endpoints, and application settings
+  </Card>
+  <Card title="HL7 Transactions" icon="exchange" href="/features/eligibility">
+    Detailed guide on eligibility, registration, and cancellation operations
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth-service">
+    Complete API documentation and code examples
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+<Warning>
+  If you encounter authentication errors, verify:
+  - Your credentials are correct
+  - The selected environment matches your account access
+  - Your API key is active and not expired
+  - Network connectivity to the environment's base URL
+</Warning>
+
+### Common Issues
+
+**Build Failures**
+
+If Maven build fails, ensure:
+- Java 8+ is installed and `JAVA_HOME` is set correctly
+- Maven 3.6+ is installed
+- You have internet connectivity for dependency downloads
+
+**Runtime Errors**
+
+If the application crashes on startup:
+- Check Java version: `java -version`
+- Verify the JAR was built successfully
+- Review logs for specific error messages
+
+**Session Expiration**
+
+Sessions are automatically refreshed, but if you see session expired messages:
+- Check your network connection
+- Verify the authentication server is accessible
+- Re-login with valid credentials
+
+## Support
+
+For additional help:
+- Review the complete [Installation Guide](/installation)
+- Check the API documentation
+- Contact your system administrator for access issues

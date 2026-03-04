@@ -1,0 +1,428 @@
+---
+title: Authentication
+description: Secure authentication and session management for HL7 connectivity
+icon: key
+---
+
+## Overview
+
+The authentication system provides secure login, automatic token refresh, and session management for HL7 connectivity operations. All HL7 operations require an active authenticated session.
+
+## Authentication Flow
+
+### Login Process
+
+The `AuthService.login()` method establishes an authenticated session:
+
+```java
+public void login(
+    String email,
+    char[] password,
+    String apiKey,
+    Environment environment
+)
+```
+
+<ParamField path="email" type="String" required>
+  User email address for authentication
+</ParamField>
+
+<ParamField path="password" type="char[]" required>
+  User password (char array for security)
+</ParamField>
+
+<ParamField path="apiKey" type="String" required>
+  API key provided by the HL7 provider
+</ParamField>
+
+<ParamField path="environment" type="Environment" required>
+  Target environment (SANDBOX or PRODUCTION)
+</ParamField>
+
+### Device Request Creation
+
+During login, the client automatically creates a `DeviceRequest` with unique device identification:
+
+```java
+private DeviceRequest createDevice() {
+    String deviceId = UUID.randomUUID().toString();
+    return new DeviceRequest(deviceId, deviceId, "HL7-Java-Client");
+}
+```
+
+**DeviceRequest Structure:**
+
+<ResponseField name="messagingid" type="String">
+  Unique messaging identifier (UUID)
+</ResponseField>
+
+<ResponseField name="deviceid" type="String">
+  Unique device identifier (UUID)
+</ResponseField>
+
+<ResponseField name="devicename" type="String">
+  Device name (default: "HL7-Java-Client")
+</ResponseField>
+
+<ResponseField name="bloqueado" type="boolean">
+  Device blocked status (always false)
+</ResponseField>
+
+<ResponseField name="recordar" type="boolean">
+  Remember device flag (always false)
+</ResponseField>
+
+### Login Request Structure
+
+The complete login request sent to the authentication endpoint:
+
+```java
+LoginRequest request = new LoginRequest(
+    apiKey,
+    email,
+    new String(password),
+    device
+);
+```
+
+### Login Response
+
+Successful authentication returns a `LoginResponse`:
+
+```java
+LoginResponse loginResponse = JsonUtil.fromJson(response.getBody(), LoginResponse.class);
+```
+
+<ResponseField name="token" type="String">
+  JWT access token for authenticated requests
+</ResponseField>
+
+<ResponseField name="exp" type="String">
+  Token expiration timestamp (format: `yyyyMMddHHmmss`)
+</ResponseField>
+
+<ResponseField name="modelEspecifico" type="Prestador">
+  Provider-specific data including CUIT and matriculation details
+</ResponseField>
+
+## Session Management
+
+### SessionContext Initialization
+
+After successful login, the session is initialized with all authentication data:
+
+```java
+private void initializeSession(
+    LoginResponse response,
+    Environment environment,
+    DeviceRequest device
+) {
+    SessionContext.initialize(
+        response.getToken(),
+        response.getExp(),
+        response.getModelEspecifico(),
+        environment,
+        device
+    );
+    
+    SessionRefreshManager.ensureStarted(this);
+}
+```
+
+The `SessionContext` stores:
+
+- Authentication token
+- Token expiration timestamp
+- Provider (Prestador) information
+- Environment configuration
+- Device information
+
+<Note>
+  `SessionContext` uses thread-safe atomic operations to manage session state across concurrent operations.
+</Note>
+
+### Checking Authentication Status
+
+Verify if a session is active:
+
+```java
+if (SessionContext.isAuthenticated()) {
+    // Proceed with HL7 operations
+}
+```
+
+**Implementation (SessionContext.java:25-28):**
+
+```java
+public static boolean isAuthenticated() {
+    SessionState state = STATE.get();
+    return state.token() != null && !state.token().isEmpty();
+}
+```
+
+## Automatic Token Refresh
+
+### SessionRefreshManager
+
+The `SessionRefreshManager` automatically refreshes authentication tokens before expiration:
+
+**Key Features:**
+
+- Automatic scheduling 2 minutes before token expiration
+- Daemon thread execution (non-blocking)
+- Automatic rescheduling after successful refresh
+- Session cleanup on refresh failure
+
+**Refresh Timing Calculation (SessionRefreshManager.java:85-96):**
+
+```java
+private static long calculateDelaySeconds(String tokenExp) {
+    LocalDateTime expTime = LocalDateTime.parse(tokenExp, EXP_FORMAT);
+    LocalDateTime refreshTime = expTime.minus(REFRESH_BEFORE);
+    
+    long delay = Duration
+        .between(LocalDateTime.now(), refreshTime)
+        .getSeconds();
+    
+    return Math.max(delay, 5); // Minimum 5 seconds
+}
+```
+
+<Warning>
+  The refresh manager uses a 2-minute buffer (`REFRESH_BEFORE = Duration.ofMinutes(2)`) to ensure the token is refreshed before expiration.
+</Warning>
+
+### Refresh Process
+
+The refresh endpoint is called automatically:
+
+```java
+private void doRefresh() {
+    if (!SessionContext.isAuthenticated()) {
+        throw new IllegalStateException("No hay sesión activa para refrescar");
+    }
+    
+    String url = EnvironmentConfig.getAuthRefreshUrl(SessionContext.getEnvironment());
+    String body = JsonUtil.toJson(SessionContext.getDevice());
+    
+    Map<String, String> headers = new HashMap<>();
+    headers.put("Authorization", "Bearer " + SessionContext.getToken());
+    
+    ApiResponse response = apiClient.post(url, body, headers);
+    // ... error handling and session update
+}
+```
+
+**Refresh Success:**
+
+```java
+SessionContext.updateAuth(
+    refreshResponse.getToken(),
+    refreshResponse.getExp(),
+    refreshResponse.getModelEspecifico()
+);
+
+SessionRefreshManager.ensureStarted(this);
+```
+
+**Refresh Failure:**
+
+On HTTP 401/403 or any error, the session is automatically cleared:
+
+```java
+logout();  // Clear session
+throw new AuthProblemException("Credenciales inválidas en refresh (HTTP " + status + ")");
+```
+
+## Logout
+
+### Manual Logout
+
+Explicitly terminate the current session:
+
+```java
+public void logout() {
+    SessionRefreshManager.stop();
+    SessionContext.clear();
+}
+```
+
+**Actions Performed:**
+
+1. Stop the automatic refresh scheduler
+2. Clear all session data from `SessionContext`
+3. Shutdown the refresh daemon thread
+
+<Note>
+  Logout is automatically called on refresh failures to prevent unauthorized operations with expired tokens.
+</Note>
+
+## Error Handling
+
+### AuthProblemException
+
+Thrown when authentication credentials are invalid or tokens cannot be refreshed:
+
+```java
+public class AuthProblemException extends RuntimeException {
+    public AuthProblemException(String message) {
+        super(message);
+    }
+}
+```
+
+**Scenarios:**
+
+- Invalid credentials during login
+- Token expired and cannot be refreshed (HTTP 401/403)
+- Token revoked by the server
+
+**Handling Example:**
+
+```java
+try {
+    authService.login(email, password, apiKey, environment);
+} catch (AuthProblemException e) {
+    // Credentials are invalid - prompt user to re-enter
+    logger.error("Authentication failed: " + e.getMessage());
+} catch (RuntimeException e) {
+    // Technical error - network, server, etc.
+    logger.error("Technical error during login: " + e.getMessage());
+}
+```
+
+### Login Error Scenarios
+
+**HTTP Error Response:**
+
+```java
+if (response.isHttpError()) {
+    throw new RuntimeException(
+        "Error técnico durante login (HTTP " + response.getStatusCode() + ")"
+    );
+}
+```
+
+**Empty Response:**
+
+```java
+if (response.getBody() == null || response.getBody().isEmpty()) {
+    throw new RuntimeException(
+        "Respuesta vacía del servicio de autenticación"
+    );
+}
+```
+
+**Invalid Response:**
+
+```java
+if (loginResponse == null || loginResponse.getToken() == null) {
+    throw new RuntimeException(
+        "Respuesta inválida del servicio de autenticación"
+    );
+}
+```
+
+## Usage Example
+
+```java
+import com.hl7client.config.Environment;
+import com.hl7client.service.AuthService;
+import com.hl7client.client.AuthProblemException;
+
+public class AuthenticationExample {
+    
+    public static void main(String[] args) {
+        AuthService authService = new AuthService();
+        
+        String email = "provider@example.com";
+        char[] password = "secure_password".toCharArray();
+        String apiKey = "your-api-key";
+        Environment environment = Environment.SANDBOX;
+        
+        try {
+            // Perform login
+            authService.login(email, password, apiKey, environment);
+            System.out.println("Authentication successful!");
+            
+            // Session is now active and automatically refreshed
+            // Perform HL7 operations...
+            
+            // When done, logout
+            authService.logout();
+            System.out.println("Logged out successfully");
+            
+        } catch (AuthProblemException e) {
+            System.err.println("Invalid credentials: " + e.getMessage());
+        } catch (RuntimeException e) {
+            System.err.println("Technical error: " + e.getMessage());
+        } finally {
+            // Clear password from memory
+            java.util.Arrays.fill(password, '\0');
+        }
+    }
+}
+```
+
+## Best Practices
+
+<Accordion title="Password Security">
+  Always use `char[]` for passwords instead of `String` to allow explicit memory clearing:
+  
+  ```java
+  char[] password = getPasswordFromUser();
+  try {
+      authService.login(email, password, apiKey, environment);
+  } finally {
+      Arrays.fill(password, '\0'); // Clear from memory
+  }
+  ```
+</Accordion>
+
+<Accordion title="Session Lifecycle Management">
+  The session is automatically managed, but you should explicitly logout when:
+  
+  - User logs out manually
+  - Application is shutting down
+  - Switching between provider accounts
+  
+  ```java
+  // Register shutdown hook
+  Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      authService.logout();
+  }));
+  ```
+</Accordion>
+
+<Accordion title="Error Recovery">
+  Handle `AuthProblemException` separately from technical errors:
+  
+  ```java
+  catch (AuthProblemException e) {
+      // Invalid credentials - require user action
+      promptForCredentials();
+  } catch (RuntimeException e) {
+      // Technical issue - retry with exponential backoff
+      retryWithBackoff();
+  }
+  ```
+</Accordion>
+
+<Accordion title="Environment Configuration">
+  Always use the appropriate environment:
+  
+  - `Environment.SANDBOX` - Testing and development
+  - `Environment.PRODUCTION` - Live operations
+  
+  ```java
+  Environment env = isProduction() 
+      ? Environment.PRODUCTION 
+      : Environment.SANDBOX;
+  ```
+</Accordion>
+
+## See Also
+
+- [Eligibility Checking](/features/eligibility)
+- [Registration Operations](/features/registration)
+- [Error Handling Guide](/api/result-types)

@@ -1,0 +1,511 @@
+---
+title: "ApiClient"
+description: "Low-level HTTP client with automatic authentication and retry logic"
+icon: "network-wired"
+---
+
+## Overview
+
+The `ApiClient` class is the foundational HTTP client used by all services. It handles HTTP POST requests, automatic authentication token injection, automatic retry on 401 errors, and comprehensive request/response logging.
+
+## Class Definition
+
+```java
+package com.hl7client.client;
+
+public class ApiClient
+```
+
+## Constructor
+
+```java
+public ApiClient(AuthRefresher authRefresher)
+```
+
+Creates a new `ApiClient` instance with custom timeout and cookie configuration.
+
+<ParamField path="authRefresher" type="AuthRefresher" required>
+  The authentication refresher to use for automatic token renewal. Must not be null.
+</ParamField>
+
+**HTTP Client Configuration:**
+
+```java
+RequestConfig config = RequestConfig.custom()
+    .setConnectTimeout(10_000)           // 10 seconds
+    .setConnectionRequestTimeout(10_000)
+    .setSocketTimeout(30_000)            // 30 seconds
+    .setCookieSpec(CookieSpecs.STANDARD) // Cloudflare compatibility
+    .build();
+```
+
+<ResponseField name="connectTimeout" type="int">
+  **10,000 ms** - Maximum time to establish connection
+</ResponseField>
+
+<ResponseField name="connectionRequestTimeout" type="int">
+  **10,000 ms** - Maximum time to obtain connection from pool
+</ResponseField>
+
+<ResponseField name="socketTimeout" type="int">
+  **30,000 ms** - Maximum time waiting for data between packets
+</ResponseField>
+
+<ResponseField name="cookieSpec" type="String">
+  **STANDARD** - Handles Cloudflare cookies with 4-digit years and commas
+</ResponseField>
+
+**Throws:** `NullPointerException` if `authRefresher` is null
+
+**Example:**
+```java
+AuthService authService = new AuthService();
+ApiClient apiClient = new ApiClient(authService);
+```
+
+<Note>
+  The cookie specification is set to `STANDARD` to prevent warnings when Cloudflare sets cookies with expiration dates containing commas and 4-digit years.
+</Note>
+
+---
+
+## Methods
+
+### post
+
+```java
+public ApiResponse post(
+    String url,
+    String body,
+    Map<String, String> headers
+)
+```
+
+Sends an HTTP POST request with automatic authentication and retry logic.
+
+<ParamField path="url" type="String" required>
+  The target URL for the POST request
+</ParamField>
+
+<ParamField path="body" type="String" required>
+  The request body (typically JSON). Can be null or empty.
+</ParamField>
+
+<ParamField path="headers" type="Map<String, String>">
+  Additional HTTP headers. Can be null. Merged with default headers.
+</ParamField>
+
+**Returns:** `ApiResponse` containing status code, response body, and headers
+
+**Throws:** `RuntimeException` if network/transport error occurs
+
+---
+
+### Request Processing
+
+#### 1. Header Building
+
+The `buildHeaders()` method constructs the final header map:
+
+```java
+private Map<String, String> buildHeaders(Map<String, String> headers) {
+    Map<String, String> finalHeaders = new HashMap<>();
+    
+    // 1. Set default headers
+    finalHeaders.put("Content-Type", "application/json; charset=UTF-8");
+    finalHeaders.put("Accept", "application/json");
+    
+    // 2. Merge custom headers (can override defaults)
+    if (headers != null) {
+        finalHeaders.putAll(headers);
+    }
+    
+    // 3. Add Authorization header if authenticated and not already set
+    if (SessionContext.isAuthenticated() && !finalHeaders.containsKey("Authorization")) {
+        finalHeaders.put("Authorization", "Bearer " + SessionContext.getToken());
+    }
+    
+    return finalHeaders;
+}
+```
+
+**Header Priority:**
+1. Default headers (Content-Type, Accept)
+2. Custom headers (can override defaults)
+3. Authorization header (added automatically if missing)
+
+**Example:**
+```java
+// Example 1: Default headers only
+apiClient.post(url, body, null);
+// Headers: Content-Type, Accept, Authorization (auto-added)
+
+// Example 2: Custom Authorization
+Map<String, String> customHeaders = new HashMap<>();
+customHeaders.put("Authorization", "Bearer custom-token");
+apiClient.post(url, body, customHeaders);
+// Headers: Content-Type, Accept, Authorization (custom value)
+
+// Example 3: Additional headers
+Map<String, String> extraHeaders = new HashMap<>();
+extraHeaders.put("X-Request-ID", "12345");
+apiClient.post(url, body, extraHeaders);
+// Headers: Content-Type, Accept, Authorization (auto), X-Request-ID
+```
+
+---
+
+#### 2. Automatic 401 Retry Logic
+
+When a request receives HTTP 401 (Unauthorized), the client automatically attempts to refresh the authentication token and retry:
+
+```java
+private ApiResponse postInternal(String url, String body, 
+                                 Map<String, String> headers, 
+                                 boolean allowRetry) {
+    // ... execute request ...
+    
+    int statusCode = response.getStatusLine().getStatusCode();
+    
+    // Automatic retry on 401
+    if (statusCode == 401 && allowRetry && canRefresh(url)) {
+        LOGGER.info("401 received, attempting auth refresh");
+        authRefresher.refreshAuth();
+        return postInternal(url, body, headers, false); // Retry once
+    }
+    
+    return new ApiResponse(statusCode, responseBody, Collections.emptyMap());
+}
+```
+
+**Retry Conditions:**
+
+<ParamField path="statusCode == 401" type="boolean">
+  Response status is Unauthorized
+</ParamField>
+
+<ParamField path="allowRetry == true" type="boolean">
+  This is the first attempt (prevents infinite loops)
+</ParamField>
+
+<ParamField path="canRefresh(url)" type="boolean">
+  URL is not an auth endpoint (prevents recursive refresh)
+</ParamField>
+
+**canRefresh() Logic:**
+```java
+private boolean canRefresh(String url) {
+    return SessionContext.isAuthenticated()
+        && !url.contains("auth-login")
+        && !url.contains("auth-refresh");
+}
+```
+
+<Warning>
+  The retry mechanism only executes **once**. If the second request also returns 401, it will fail without further attempts.
+</Warning>
+
+**Retry Flow Example:**
+
+```
+Request 1: POST /hl7/elegibilidad
+  → 401 Unauthorized
+  → Trigger: authRefresher.refreshAuth()
+  → Token updated in SessionContext
+  
+Request 2: POST /hl7/elegibilidad (with new token)
+  → 200 OK
+  → Return response
+```
+
+---
+
+### Logging Methods
+
+The `ApiClient` provides comprehensive logging for debugging:
+
+#### logRequest
+
+```java
+private void logRequest(HttpPost post, String body) {
+    System.out.println("=== REQUEST ===");
+    System.out.println("URL: " + post.getURI());
+    System.out.println("Method: POST");
+    System.out.println("Headers: " + Arrays.toString(post.getAllHeaders()));
+    System.out.println("Body: " + body);
+    System.out.println("==============");
+}
+```
+
+**Example Output:**
+```
+=== REQUEST ===
+URL: https://api.example.com/hl7/elegibilidad
+Method: POST
+Headers: [Content-Type: application/json; charset=UTF-8, Authorization: Bearer eyJ...]
+Body: {"dniAfiliado":"12345678",...}
+==============
+```
+
+---
+
+#### logResponse
+
+```java
+private void logResponse(int status, String body) {
+    System.out.println("=== RESPONSE ===");
+    System.out.println("Status: " + status);
+    System.out.println("Body: " + body);
+    System.out.println("================");
+}
+```
+
+**Example Output:**
+```
+=== RESPONSE ===
+Status: 200
+Body: {"rechaCabecera":0,...}
+================
+```
+
+---
+
+#### logAsCurl
+
+```java
+private void logAsCurl(HttpPost post, String body) {
+    StringBuilder curl = new StringBuilder("curl -X POST '").append(post.getURI()).append("'");
+    
+    for (org.apache.http.Header h : post.getAllHeaders()) {
+        curl.append(" \\
+  -H '").append(h.getName())
+            .append(": ").append(h.getValue()).append("'");
+    }
+    
+    if (body != null && !body.trim().isEmpty()) {
+        curl.append(" \\
+  --data '").append(body.replace("'", "'\\''")).append("'");
+    }
+    
+    System.out.println("=== CURL ===");
+    System.out.println(curl);
+    System.out.println("============");
+}
+```
+
+**Example Output:**
+```
+=== CURL ===
+curl -X POST 'https://api.example.com/hl7/elegibilidad' \
+  -H 'Content-Type: application/json; charset=UTF-8' \
+  -H 'Authorization: Bearer eyJ...' \
+  --data '{"dniAfiliado":"12345678"}'
+============
+```
+
+<Note>
+  The CURL output properly escapes single quotes in the body by replacing `'` with `'\''`.
+</Note>
+
+---
+
+### close
+
+```java
+public void close() throws IOException
+```
+
+Closes the underlying HTTP client and releases resources.
+
+**Best Practice:**
+```java
+ApiClient apiClient = new ApiClient(authService);
+try {
+    // Use apiClient
+} finally {
+    apiClient.close();
+}
+```
+
+<Warning>
+  In the current application architecture, `ApiClient` instances are typically long-lived and shared. Closing the client will prevent further requests.
+</Warning>
+
+---
+
+## ApiResponse Structure
+
+The `post()` method returns an `ApiResponse` object:
+
+```java
+public final class ApiResponse {
+    private final int statusCode;
+    private final String body;
+    private final Map<String, String> headers;
+    
+    public int getStatusCode() { ... }
+    public String getBody() { ... }
+    public Map<String, String> getHeaders() { ... }
+    public boolean isHttpError() { return statusCode >= 400; }
+}
+```
+
+<ResponseField name="statusCode" type="int">
+  HTTP status code (200, 401, 500, etc.)
+</ResponseField>
+
+<ResponseField name="body" type="String">
+  Response body as a string (typically JSON)
+</ResponseField>
+
+<ResponseField name="headers" type="Map<String, String>">
+  Response headers (currently always empty in implementation)
+</ResponseField>
+
+<ResponseField name="isHttpError()" type="boolean">
+  Returns `true` if status code is 400 or higher
+</ResponseField>
+
+---
+
+## Usage Examples
+
+### Basic POST Request
+
+```java
+ApiClient apiClient = new ApiClient(authService);
+
+String url = "https://api.example.com/endpoint";
+String body = "{\"key\":\"value\"}";
+
+ApiResponse response = apiClient.post(url, body, null);
+
+if (response.isHttpError()) {
+    System.err.println("HTTP Error: " + response.getStatusCode());
+} else {
+    System.out.println("Success: " + response.getBody());
+}
+```
+
+### Custom Headers
+
+```java
+Map<String, String> headers = new HashMap<>();
+headers.put("X-Request-ID", UUID.randomUUID().toString());
+headers.put("X-Client-Version", "1.0.0");
+
+ApiResponse response = apiClient.post(url, body, headers);
+```
+
+### Handling 401 with Automatic Retry
+
+```java
+// First request with expired token → 401
+// Client automatically calls authRefresher.refreshAuth()
+// Second request with new token → 200
+ApiResponse response = apiClient.post(url, body, null);
+
+// If second request also fails with 401, no further retry
+if (response.getStatusCode() == 401) {
+    System.err.println("Authentication failed even after refresh");
+    // User needs to log in again
+}
+```
+
+---
+
+## Error Handling
+
+### Transport Errors
+
+```java
+try {
+    ApiResponse response = apiClient.post(url, body, null);
+} catch (RuntimeException e) {
+    // Network error, timeout, or connection failure
+    System.err.println("Transport error: " + e.getMessage());
+    // Typically contains IOException as cause
+}
+```
+
+**Common transport errors:**
+- Connection timeout (10 seconds)
+- Socket timeout (30 seconds)
+- DNS resolution failure
+- Network unreachable
+
+### HTTP Errors
+
+```java
+ApiResponse response = apiClient.post(url, body, null);
+
+if (response.isHttpError()) {
+    switch (response.getStatusCode()) {
+        case 400:
+            System.err.println("Bad request: " + response.getBody());
+            break;
+        case 401:
+            System.err.println("Unauthorized (retry failed)");
+            break;
+        case 403:
+            System.err.println("Forbidden");
+            break;
+        case 500:
+            System.err.println("Server error");
+            break;
+        default:
+            System.err.println("HTTP error " + response.getStatusCode());
+    }
+}
+```
+
+---
+
+## Thread Safety
+
+<Note>
+  `ApiClient` uses Apache `CloseableHttpClient`, which is thread-safe. Multiple threads can safely call `post()` concurrently. However, the automatic retry logic depends on `SessionContext`, which is a global singleton and not thread-safe.
+</Note>
+
+---
+
+## Related Types
+
+- [AuthRefresher](/api/auth-service) - Interface for authentication refresh
+- [AuthService](/api/auth-service) - Default `AuthRefresher` implementation
+- [SessionContext](/configuration/session-management) - Global session state
+- [ApiResponse](/api/api-client) - Response wrapper
+
+---
+
+## Configuration
+
+### Timeout Customization
+
+To customize timeouts, modify the constructor:
+
+```java
+RequestConfig config = RequestConfig.custom()
+    .setConnectTimeout(15_000)     // 15 seconds
+    .setSocketTimeout(60_000)      // 60 seconds
+    .setCookieSpec(CookieSpecs.STANDARD)
+    .build();
+
+this.httpClient = HttpClients.custom()
+    .setDefaultRequestConfig(config)
+    .build();
+```
+
+### Disabling Logging
+
+To disable request/response logging:
+
+```java
+private void logRequest(HttpPost post, String body) {
+    // Comment out or remove System.out.println calls
+}
+```
+
+<Warning>
+  Logging includes sensitive data like authentication tokens and request bodies. Ensure logs are properly secured in production environments.
+</Warning>

@@ -1,0 +1,271 @@
+---
+title: "AuthService"
+description: "Authentication service for managing user sessions and credentials"
+icon: "key"
+---
+
+## Overview
+
+The `AuthService` class handles authentication operations including login, logout, and automatic token refresh. It implements the `AuthRefresher` interface to support automatic credential renewal.
+
+## Class Definition
+
+```java
+package com.hl7client.service;
+
+public class AuthService implements AuthRefresher
+```
+
+## Constructor
+
+### Default Constructor
+
+```java
+public AuthService()
+```
+
+Creates a new `AuthService` instance with a default `ApiClient`.
+
+**Usage:**
+```java
+AuthService authService = new AuthService();
+```
+
+### Constructor with ApiClient
+
+```java
+public AuthService(ApiClient apiClient)
+```
+
+Creates a new `AuthService` instance with a custom `ApiClient`.
+
+<ParamField path="apiClient" type="ApiClient" required>
+  The API client to use for HTTP requests. Must not be null.
+</ParamField>
+
+**Throws:** `NullPointerException` if `apiClient` is null
+
+---
+
+## Methods
+
+### login
+
+```java
+public void login(
+    String email,
+    char[] password,
+    String apiKey,
+    Environment environment
+)
+```
+
+Authenticates a user with the HL7 Connectivity Providers service.
+
+<ParamField path="email" type="String" required>
+  User's email address
+</ParamField>
+
+<ParamField path="password" type="char[]" required>
+  User's password as a character array (for security)
+</ParamField>
+
+<ParamField path="apiKey" type="String" required>
+  API key for authentication
+</ParamField>
+
+<ParamField path="environment" type="Environment" required>
+  Target environment (DEVELOPMENT, QA, or PRODUCTION)
+</ParamField>
+
+**Behavior:**
+1. Creates a unique device identifier using `UUID.randomUUID()`
+2. Constructs a `DeviceRequest` with device information:
+   - `messagingid`: Random UUID
+   - `deviceid`: Same UUID as messagingid
+   - `devicename`: "HL7-Java-Client"
+   - `bloqueado`: false
+   - `recordar`: false
+3. Sends authentication request to the configured auth URL
+4. Initializes `SessionContext` with the returned token and metadata
+5. Starts the `SessionRefreshManager` for automatic token renewal
+
+**Throws:**
+- `NullPointerException` - if `environment` is null
+- `RuntimeException` - if HTTP request fails or response is invalid:
+  - "Error técnico durante login (HTTP {statusCode})" - for HTTP errors (4xx, 5xx)
+  - "Respuesta vacía del servicio de autenticación" - for empty response body
+  - "Respuesta inválida del servicio de autenticación" - for malformed response
+
+**Example:**
+```java
+AuthService authService = new AuthService();
+
+try {
+    authService.login(
+        "user@example.com",
+        "password".toCharArray(),
+        "your-api-key",
+        Environment.PRODUCTION
+    );
+    System.out.println("Login successful");
+} catch (RuntimeException e) {
+    System.err.println("Login failed: " + e.getMessage());
+}
+```
+
+<Note>
+  The password is passed as `char[]` instead of `String` for security reasons. This allows the password to be cleared from memory after use.
+</Note>
+
+---
+
+### logout
+
+```java
+public void logout()
+```
+
+Ends the current user session and clears authentication state.
+
+**Behavior:**
+1. Stops the `SessionRefreshManager`
+2. Clears all data in `SessionContext`
+
+**Example:**
+```java
+authService.logout();
+System.out.println("User logged out");
+```
+
+---
+
+### refreshAuth
+
+```java
+@Override
+public void refreshAuth()
+```
+
+Implements the `AuthRefresher` interface. Refreshes the authentication token using the current session's device information.
+
+**Behavior:**
+1. Validates that a session is active
+2. Validates that device information exists
+3. Sends refresh request to the auth-refresh endpoint with current token
+4. Updates `SessionContext` with new token and expiration
+5. Restarts the `SessionRefreshManager`
+
+**Throws:**
+- `IllegalStateException` - if no active session exists or device information is missing:
+  - "No hay sesión activa para refrescar"
+  - "No hay información de device en sesión"
+- `AuthProblemException` - if refresh fails due to authentication issues (HTTP 401/403):
+  - "Credenciales inválidas en refresh (HTTP {statusCode})"
+- `RuntimeException` - for technical errors:
+  - "Error técnico en auth-refresh (HTTP {statusCode})" - for other HTTP errors
+  - "Respuesta vacía en auth-refresh" - for empty response
+  - "Respuesta inválida de auth-refresh" - for malformed response
+
+<Warning>
+  If refresh fails, the session is automatically cleared (logout), regardless of the error type.
+</Warning>
+
+**Example:**
+```java
+try {
+    authService.refreshAuth();
+    System.out.println("Token refreshed successfully");
+} catch (AuthProblemException e) {
+    // User needs to log in again
+    System.err.println("Authentication failed: " + e.getMessage());
+} catch (RuntimeException e) {
+    // Technical error
+    System.err.println("Refresh error: " + e.getMessage());
+}
+```
+
+---
+
+### doRefresh (Internal)
+
+```java
+private void doRefresh()
+```
+
+Internal method that performs the actual refresh logic. Called by `refreshAuth()`.
+
+**Implementation Details:**
+- Retrieves auth-refresh URL from `EnvironmentConfig`
+- Serializes current `DeviceRequest` to JSON
+- Adds `Authorization: Bearer {token}` header
+- Handles HTTP status codes:
+  - **401/403**: Clears session and throws `AuthProblemException`
+  - **Other errors**: Clears session and throws `RuntimeException`
+- Updates `SessionContext` with new token, expiration, and model-specific data
+
+---
+
+## DeviceRequest Structure
+
+The `createDevice()` helper method generates a unique device identifier:
+
+```java
+private DeviceRequest createDevice() {
+    String deviceId = UUID.randomUUID().toString();
+    return new DeviceRequest(deviceId, deviceId, "HL7-Java-Client");
+}
+```
+
+**DeviceRequest Fields:**
+
+<ResponseField name="messagingid" type="String">
+  Unique device identifier (UUID)
+</ResponseField>
+
+<ResponseField name="deviceid" type="String">
+  Same as messagingid
+</ResponseField>
+
+<ResponseField name="devicename" type="String">
+  Always "HL7-Java-Client"
+</ResponseField>
+
+<ResponseField name="bloqueado" type="boolean">
+  Always `false`
+</ResponseField>
+
+<ResponseField name="recordar" type="boolean">
+  Always `false`
+</ResponseField>
+
+---
+
+## Exception Hierarchy
+
+```java
+RuntimeException
+├── AuthProblemException    // Authentication/authorization failures
+└── RuntimeException         // Technical errors (network, parsing, etc.)
+```
+
+**When to catch which exception:**
+- `AuthProblemException`: User needs to re-authenticate (credentials invalid/expired)
+- `RuntimeException`: Retry or show technical error message
+
+---
+
+## Related Types
+
+- [ApiClient](/api/api-client) - HTTP client used by AuthService
+- [Environment](/configuration/environments) - Environment enum (DEVELOPMENT, QA, PRODUCTION)
+- [SessionContext](/configuration/session-management) - Session state management
+- [AuthRefresher](/api/auth-service) - Interface for authentication refresh
+
+---
+
+## Thread Safety
+
+<Warning>
+  `AuthService` is **not thread-safe**. The underlying `SessionContext` is a global singleton. Ensure login/logout operations are called from a single thread.
+</Warning>

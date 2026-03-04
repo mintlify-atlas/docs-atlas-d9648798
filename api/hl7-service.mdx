@@ -1,0 +1,382 @@
+---
+title: "Hl7Service"
+description: "Service for executing HL7 transactions (eligibility, registration, cancellation)"
+icon: "hospital"
+---
+
+## Overview
+
+The `Hl7Service` class provides high-level methods for executing HL7 transactions with the Connectivity Providers API. It handles request serialization, HTTP communication, response validation, and error classification.
+
+## Class Definition
+
+```java
+package com.hl7client.service;
+
+public class Hl7Service
+```
+
+## Constructor
+
+```java
+public Hl7Service(ApiClient apiClient)
+```
+
+Creates a new `Hl7Service` instance.
+
+<ParamField path="apiClient" type="ApiClient" required>
+  The API client to use for HTTP requests. Must not be null.
+</ParamField>
+
+**Throws:** `NullPointerException` if `apiClient` is null
+
+**Example:**
+```java
+AuthService authService = new AuthService();
+ApiClient apiClient = new ApiClient(authService);
+Hl7Service hl7Service = new Hl7Service(apiClient);
+```
+
+---
+
+## Public Methods
+
+### consultarElegibilidad
+
+```java
+public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+    ElegibilidadRequest request
+)
+```
+
+Queries the eligibility (elegibilidad) of a patient for medical services.
+
+<ParamField path="request" type="ElegibilidadRequest" required>
+  Eligibility query request containing patient and service information
+</ParamField>
+
+**Returns:** `Hl7Result<ElegibilidadResponse>` with one of these statuses:
+- `OK` - Patient is eligible
+- `REJECTED` - Patient is not eligible (with reason in `issue`)
+- `ERROR` - Technical error occurred
+
+**Example:**
+```java
+ElegibilidadRequest request = new ElegibilidadRequest();
+request.setDniAfiliado("12345678");
+request.setCodigoPractica("420101");
+// ... set other fields
+
+Hl7Result<ElegibilidadResponse> result = hl7Service.consultarElegibilidad(request);
+
+if (result.isOk()) {
+    ElegibilidadResponse response = result.getData().get();
+    System.out.println("Patient is eligible");
+} else if (result.isError()) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Error: " + error.getDescription());
+}
+```
+
+---
+
+### consultarRegistracion
+
+```java
+public Hl7Result<RegistracionResponse> consultarRegistracion(
+    RegistracionRequest request
+)
+```
+
+Registers medical services/benefits for a patient.
+
+<ParamField path="request" type="RegistracionRequest" required>
+  Registration request containing patient, service, and benefit information
+</ParamField>
+
+**Returns:** `Hl7Result<RegistracionResponse>` with one of these statuses:
+- `OK` - All items registered successfully
+- `PARTIAL` - Some items failed (details in `details` list)
+- `REJECTED` - Entire request rejected (reason in `issue`)
+- `ERROR` - Technical error occurred
+
+**Example:**
+```java
+RegistracionRequest request = new RegistracionRequest();
+// ... configure request
+
+Hl7Result<RegistracionResponse> result = hl7Service.consultarRegistracion(request);
+
+if (result.isOk()) {
+    System.out.println("All items registered");
+} else if (result.isPartial()) {
+    System.out.println("Partial success, failed items:");
+    for (Hl7ItemError error : result.getDetails()) {
+        System.out.println("  - " + error.getCode() + ": " + error.getDescription());
+    }
+} else if (result.getStatus() == Hl7Status.REJECTED) {
+    Hl7Error error = result.getIssue().get();
+    System.err.println("Request rejected: " + error.getDescription());
+}
+```
+
+<Note>
+  Registration can return `PARTIAL` status when the header is accepted but some detail items fail validation. Check `result.getDetails()` for item-level errors.
+</Note>
+
+---
+
+### cancelarPrestacion
+
+```java
+public Hl7Result<CancelacionResponse> cancelarPrestacion(
+    CancelacionRequest request
+)
+```
+
+Cancels previously registered medical services/benefits.
+
+<ParamField path="request" type="CancelacionRequest" required>
+  Cancellation request with transaction IDs to cancel
+</ParamField>
+
+**Returns:** `Hl7Result<CancelacionResponse>` with one of these statuses:
+- `OK` - All items cancelled successfully
+- `PARTIAL` - Some items failed to cancel (details in `details` list)
+- `REJECTED` - Entire cancellation rejected (reason in `issue`)
+- `ERROR` - Technical error occurred
+
+**Example:**
+```java
+CancelacionRequest request = new CancelacionRequest();
+request.setNumeroTransaccion("12345");
+// ... configure request
+
+Hl7Result<CancelacionResponse> result = hl7Service.cancelarPrestacion(request);
+
+if (result.isOk()) {
+    System.out.println("Cancellation successful");
+} else if (result.isPartial()) {
+    System.out.println("Some items failed to cancel:");
+    result.getDetails().forEach(error ->
+        System.out.println("  " + error.getDescription())
+    );
+}
+```
+
+---
+
+## Internal Implementation
+
+### postHl7 (Core Method)
+
+```java
+private <T> Hl7Result<T> postHl7(
+    String url,
+    Object request,
+    Class<T> responseType,
+    Hl7Validator<T> validator
+)
+```
+
+Generic method that handles all HL7 transaction logic. This method is used internally by all public methods.
+
+**Process Flow:**
+
+1. **Session Validation**: Checks if user is authenticated
+   - Returns `Hl7Result.error(Hl7Error.sessionExpired())` if not authenticated
+
+2. **Request Serialization**: Converts request object to JSON using `JsonUtil`
+
+3. **HTTP Request**: Sends POST request via `ApiClient`
+
+4. **HTTP Status Validation**: 
+   ```java
+   if (response.getStatusCode() < 200 || response.getStatusCode() >= 300) {
+       return Hl7Result.error(
+           Hl7Error.technical(
+               "Error técnico del servidor HL7 (HTTP " + statusCode + ")",
+               Hl7ErrorOrigin.TRANSPORTE
+           )
+       );
+   }
+   ```
+
+5. **Response Parsing**: Deserializes JSON response to the target type
+
+6. **Business Validation**: Calls the appropriate validator function
+
+7. **Exception Handling**: Catches any parsing errors and returns technical error
+
+<Warning>
+  The HTTP status validation is **critical**. Any status code outside 200-299 is treated as a technical error, not a business rejection.
+</Warning>
+
+---
+
+### Validator Pattern
+
+The service uses a functional interface for validation logic:
+
+```java
+@FunctionalInterface
+private interface Hl7Validator<T> {
+    Hl7Result<T> validate(T response);
+}
+```
+
+Each transaction type has its own validator:
+- `validarElegibilidad()` - Checks `rechaCabecera` field
+- `validarRegistracion()` - Checks header and detail-level errors
+- `validarCancelacion()` - Checks header and detail-level errors
+
+**Elegibilidad Validation Logic:**
+```java
+if (r.getRechaCabecera() != null && r.getRechaCabecera() > 0) {
+    return Hl7Result.rejected(
+        r,
+        Hl7Error.functional(
+            String.valueOf(r.getRechaCabecera()),
+            r.getRechaCabeDeno()
+        )
+    );
+}
+return Hl7Result.ok(r);
+```
+
+**Registration/Cancellation Validation Logic:**
+```java
+// 1. Check header rejection
+if (cab.getRechaCabecera() != null && cab.getRechaCabecera() > 0) {
+    return Hl7Result.rejected(...);
+}
+
+// 2. Collect detail-level errors
+List<Hl7ItemError> detalles = new ArrayList<>();
+for (RegistracionDetalle d : r.getDetalle()) {
+    if (d.getRecha() != null && d.getRecha() > 0) {
+        detalles.add(new Hl7ItemError(
+            String.valueOf(d.getRecha()),
+            d.getDenoItem(),
+            Hl7ItemErrorOrigin.DETALLE
+        ));
+    }
+}
+
+// 3. Return OK or PARTIAL
+return detalles.isEmpty()
+    ? Hl7Result.ok(r)
+    : Hl7Result.partial(r, detalles);
+```
+
+---
+
+## Result Status Types
+
+All methods return `Hl7Result<T>` with these possible statuses:
+
+<ResponseField name="OK" type="Hl7Status">
+  **Success**: Transaction completed successfully.
+  - `data`: Contains the response object
+  - `issue`: Empty
+  - `details`: Empty list
+</ResponseField>
+
+<ResponseField name="PARTIAL" type="Hl7Status">
+  **Partial Success**: Header accepted but some detail items failed.
+  - `data`: Contains the response object (with both successful and failed items)
+  - `issue`: Empty
+  - `details`: List of item-level errors (`Hl7ItemError`)
+  
+  **Only applies to**: `consultarRegistracion` and `cancelarPrestacion`
+</ResponseField>
+
+<ResponseField name="REJECTED" type="Hl7Status">
+  **Business Rejection**: HL7 system rejected the entire request for functional reasons.
+  - `data`: Contains the response object
+  - `issue`: Business error with code and description
+  - `details`: Empty list
+</ResponseField>
+
+<ResponseField name="ERROR" type="Hl7Status">
+  **Technical Error**: System error occurred (network, parsing, HTTP error).
+  - `data`: Empty
+  - `issue`: Technical error with origin (TRANSPORTE, PARSEO, SESION)
+  - `details`: Empty list
+</ResponseField>
+
+---
+
+## Error Origins
+
+Technical errors are classified by origin:
+
+```java
+public enum Hl7ErrorOrigin {
+    TRANSPORTE,  // Network or HTTP errors
+    PARSEO,      // JSON deserialization errors
+    SESION       // Session expired or not authenticated
+}
+```
+
+**Example error messages:**
+- `TRANSPORTE`: "Error técnico del servidor HL7 (HTTP 500)"
+- `PARSEO`: "Error técnico procesando respuesta HL7"
+- `SESION`: "Sesión expirada"
+
+---
+
+## Usage Pattern
+
+Typical workflow for handling HL7 results:
+
+```java
+Hl7Result<ElegibilidadResponse> result = hl7Service.consultarElegibilidad(request);
+
+switch (result.getStatus()) {
+    case OK:
+        ElegibilidadResponse response = result.getData().get();
+        // Process successful response
+        break;
+        
+    case REJECTED:
+        Hl7Error error = result.getIssue().get();
+        System.err.println("Rejected: [" + error.getCode() + "] " + 
+                          error.getDescription());
+        break;
+        
+    case PARTIAL:
+        // Only for Registration/Cancellation
+        result.getData().ifPresent(data -> {
+            // Process successful items
+        });
+        for (Hl7ItemError itemError : result.getDetails()) {
+            System.err.println("Item failed: " + itemError.getDescription());
+        }
+        break;
+        
+    case ERROR:
+        Hl7Error techError = result.getIssue().get();
+        System.err.println("Technical error (" + techError.getOrigin() + "): " + 
+                          techError.getDescription());
+        break;
+}
+```
+
+---
+
+## Related Types
+
+- [ApiClient](/api/api-client) - HTTP client for API communication
+- [Hl7Result](/api/result-types) - Result wrapper with status and error information
+- [ElegibilidadRequest](/api/request-models) - Eligibility query request
+- [RegistracionRequest](/api/request-models) - Registration request
+- [CancelacionRequest](/api/request-models) - Cancellation request
+
+---
+
+## Thread Safety
+
+<Note>
+  `Hl7Service` itself is stateless and thread-safe, but it depends on `SessionContext` which is a global singleton. Ensure proper synchronization when using from multiple threads.
+</Note>

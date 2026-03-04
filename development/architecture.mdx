@@ -1,0 +1,597 @@
+---
+title: Architecture
+description: Understand the architectural patterns and package structure of the HL7 Connectivity Providers Client
+---
+
+## Overview
+
+The HL7 Connectivity Providers Client is built using a classic Model-View-Controller (MVC) architecture with clear separation of concerns. The application is organized into distinct layers that handle UI, business logic, data access, and external communication.
+
+## Package Structure
+
+The application follows a modular package organization under `com.hl7client`:
+
+```
+com.hl7client/
+├── client/          # HTTP client and API communication
+├── config/          # Session management and environment configuration
+├── controller/      # MVC controllers
+├── model/           # Domain models and business logic
+│   ├── benefit/     # Benefit item abstractions
+│   ├── dental/      # Dental-specific models and rules
+│   ├── dto/         # Data transfer objects
+│   └── result/      # Result wrapper patterns
+├── service/         # Business services layer
+├── ui/              # User interface components
+│   ├── frames/      # Main application windows
+│   ├── dialogs/     # Dialog windows
+│   └── util/        # UI utilities
+└── util/            # General utilities
+```
+
+## MVC Pattern Implementation
+
+The application implements a strict MVC pattern with clear responsibilities:
+
+### Controller Layer
+
+Controllers coordinate between UI and services without containing business logic.
+
+<CodeGroup>
+```java LoginController.java
+package com.hl7client.controller;
+
+public class LoginController implements AuthRefresher {
+    private final AuthService authService;
+    private LoginListener loginListener;
+
+    public LoginController(LoginFrame view, AuthService authService) {
+        this.authService = Objects.requireNonNull(authService);
+        view.setController(this);
+    }
+
+    public Hl7Result<Void> login(
+            String email,
+            char[] password,
+            String apiKey,
+            String environment
+    ) {
+        try {
+            Environment env = Environment.valueOf(environment);
+            authService.login(email, password, apiKey, env);
+            clearPassword(password);
+            
+            if (loginListener != null) {
+                loginListener.onLoginSuccess();
+            }
+            return Hl7Result.ok(null);
+        } catch (Exception e) {
+            return Hl7Result.error(Hl7Error.technical(
+                e.getMessage(),
+                Hl7ErrorOrigin.TRANSPORTE
+            ));
+        }
+    }
+}
+```
+
+```java Hl7Controller.java
+package com.hl7client.controller;
+
+public class Hl7Controller {
+    private final Hl7Service hl7Service;
+
+    public Hl7Controller(Hl7Service hl7Service) {
+        this.hl7Service = Objects.requireNonNull(hl7Service);
+    }
+
+    public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+            ElegibilidadRequest request
+    ) {
+        if (request == null) {
+            return errorRequestInvalido("ElegibilidadRequest");
+        }
+        return hl7Service.consultarElegibilidad(request);
+    }
+
+    public Hl7Result<RegistracionResponse> consultarRegistracion(
+            RegistracionRequest request
+    ) {
+        if (request == null) {
+            return errorRequestInvalido("RegistracionRequest");
+        }
+        return hl7Service.consultarRegistracion(request);
+    }
+}
+```
+</CodeGroup>
+
+### Service Layer
+
+Services encapsulate business logic and coordinate external API calls.
+
+<Accordion title="AuthService - Authentication and Session Management">
+```java AuthService.java
+package com.hl7client.service;
+
+public class AuthService implements AuthRefresher {
+    private final ApiClient apiClient;
+
+    public AuthService() {
+        this.apiClient = new ApiClient(this);
+    }
+
+    public void login(
+            String email,
+            char[] password,
+            String apiKey,
+            Environment environment
+    ) {
+        String url = EnvironmentConfig.getAuthUrl(environment);
+        DeviceRequest device = createDevice();
+        
+        LoginRequest request = new LoginRequest(
+            apiKey, email, new String(password), device
+        );
+        
+        String jsonRequest = JsonUtil.toJson(request);
+        Map<String, String> headers = defaultJsonHeaders();
+        
+        ApiResponse response = apiClient.post(url, jsonRequest, headers);
+        
+        if (response.isHttpError()) {
+            throw new RuntimeException(
+                "Error técnico durante login (HTTP " + 
+                response.getStatusCode() + ")"
+            );
+        }
+        
+        LoginResponse loginResponse = 
+            JsonUtil.fromJson(response.getBody(), LoginResponse.class);
+        
+        initializeSession(loginResponse, environment, device);
+    }
+
+    @Override
+    public void refreshAuth() {
+        String url = EnvironmentConfig.getAuthRefreshUrl(
+            SessionContext.getEnvironment()
+        );
+        String body = JsonUtil.toJson(SessionContext.getDevice());
+        
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Authorization", "Bearer " + SessionContext.getToken());
+        
+        ApiResponse response = apiClient.post(url, body, headers);
+        
+        if (response.isHttpError()) {
+            int status = response.getStatusCode();
+            logout();
+            
+            if (status == 401 || status == 403) {
+                throw new AuthProblemException(
+                    "Credenciales inválidas en refresh"
+                );
+            }
+        }
+        
+        LoginResponse refreshResponse = 
+            JsonUtil.fromJson(response.getBody(), LoginResponse.class);
+        
+        SessionContext.updateAuth(
+            refreshResponse.getToken(),
+            refreshResponse.getExp(),
+            refreshResponse.getModelEspecifico()
+        );
+        
+        SessionRefreshManager.ensureStarted(this);
+    }
+}
+```
+</Accordion>
+
+<Accordion title="Hl7Service - HL7 Message Processing">
+```java Hl7Service.java
+package com.hl7client.service;
+
+public class Hl7Service {
+    private final ApiClient apiClient;
+
+    public Hl7Result<ElegibilidadResponse> consultarElegibilidad(
+            ElegibilidadRequest request
+    ) {
+        return postHl7(
+            EnvironmentConfig.getHl7ElegibilidadUrl(
+                SessionContext.getEnvironment()
+            ),
+            request,
+            ElegibilidadResponse.class,
+            this::validarElegibilidad
+        );
+    }
+
+    private <T> Hl7Result<T> postHl7(
+            String url,
+            Object request,
+            Class<T> responseType,
+            Hl7Validator<T> validator
+    ) {
+        if (!SessionContext.isAuthenticated()) {
+            return Hl7Result.error(Hl7Error.sessionExpired());
+        }
+
+        try {
+            String body = JsonUtil.toJson(request);
+            ApiResponse response = apiClient.post(url, body, null);
+
+            if (response.getStatusCode() < 200 || 
+                response.getStatusCode() >= 300) {
+                return Hl7Result.error(Hl7Error.technical(
+                    "Error técnico del servidor HL7 (HTTP " + 
+                    response.getStatusCode() + ")",
+                    Hl7ErrorOrigin.TRANSPORTE
+                ));
+            }
+
+            T hl7 = JsonUtil.fromJson(response.getBody(), responseType);
+            return validator.validate(hl7);
+
+        } catch (Exception e) {
+            return Hl7Result.error(Hl7Error.technical(
+                "Error técnico procesando respuesta HL7",
+                Hl7ErrorOrigin.PARSEO
+            ));
+        }
+    }
+}
+```
+</Accordion>
+
+### Client Layer
+
+The client layer handles low-level HTTP communication with automatic retry and token refresh.
+
+```java ApiClient.java
+package com.hl7client.client;
+
+public class ApiClient {
+    private static final Logger LOGGER = 
+        Logger.getLogger(ApiClient.class.getName());
+    
+    private final CloseableHttpClient httpClient;
+    private final AuthRefresher authRefresher;
+
+    public ApiClient(AuthRefresher authRefresher) {
+        RequestConfig config = RequestConfig.custom()
+            .setConnectTimeout(10_000)
+            .setConnectionRequestTimeout(10_000)
+            .setSocketTimeout(30_000)
+            .setCookieSpec(CookieSpecs.STANDARD)
+            .build();
+
+        this.httpClient = HttpClients.custom()
+            .setDefaultRequestConfig(config)
+            .build();
+
+        this.authRefresher = Objects.requireNonNull(authRefresher);
+    }
+
+    public ApiResponse post(String url, String body, 
+                           Map<String, String> headers) {
+        return postInternal(url, body, headers, true);
+    }
+
+    private ApiResponse postInternal(String url, String body, 
+                                    Map<String, String> headers, 
+                                    boolean allowRetry) {
+        HttpPost post = new HttpPost(url);
+        Map<String, String> finalHeaders = buildHeaders(headers);
+        finalHeaders.forEach(post::addHeader);
+
+        if (body != null && !body.trim().isEmpty()) {
+            post.setEntity(new StringEntity(body, StandardCharsets.UTF_8));
+        }
+
+        try (CloseableHttpResponse response = httpClient.execute(post)) {
+            int statusCode = response.getStatusLine().getStatusCode();
+            String responseBody = EntityUtils.toString(
+                response.getEntity(), 
+                StandardCharsets.UTF_8
+            );
+
+            // Automatic token refresh on 401
+            if (statusCode == 401 && allowRetry && canRefresh(url)) {
+                LOGGER.info("401 received, attempting auth refresh");
+                authRefresher.refreshAuth();
+                return postInternal(url, body, headers, false);
+            }
+
+            return new ApiResponse(
+                statusCode, 
+                responseBody, 
+                Collections.emptyMap()
+            );
+
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Transport error calling API", e);
+            throw new RuntimeException(
+                "Error de comunicación con el servicio", e
+            );
+        }
+    }
+}
+```
+
+## Application Lifecycle Management
+
+The `Application` class manages the entire application lifecycle, coordinating frame transitions and session management.
+
+```java Application.java
+package com.hl7client;
+
+public class Application {
+    private LoginFrame loginFrame;
+    private MainFrame mainFrame;
+    private AuthService authService;
+
+    public void start() {
+        ThemeManager.getInstance().initialize();
+        openLogin();
+    }
+
+    private void openLogin() {
+        closeMainFrame();
+        
+        authService = new AuthService();
+        loginFrame = new LoginFrame(this);
+        
+        LoginController controller = 
+            new LoginController(loginFrame, authService);
+        
+        controller.setLoginListener(new LoginController.LoginListener() {
+            @Override
+            public void onLoginSuccess() {
+                openMainFrame();
+            }
+            
+            @Override
+            public void onSessionEnded(SessionEndReason reason) {
+                handleSessionEnd(reason);
+            }
+        });
+        
+        loginFrame.setVisible(true);
+    }
+
+    private void openMainFrame() {
+        closeLoginFrame();
+        
+        ApiClient apiClient = new ApiClient(authService);
+        Hl7Service hl7Service = new Hl7Service(apiClient);
+        Hl7Controller hl7Controller = new Hl7Controller(hl7Service);
+        
+        mainFrame = new MainFrame(this, hl7Controller);
+        mainFrame.configureTitle(
+            SessionContext.getPrestador().getRazonSocialPrestador(),
+            SessionContext.getEnvironment().name()
+        );
+        mainFrame.setVisible(true);
+    }
+
+    private void handleSessionEnd(SessionEndReason reason) {
+        closeMainFrame();
+        
+        switch (reason) {
+            case MANUAL_LOGOUT:
+                JOptionPane.showMessageDialog(
+                    null, 
+                    "Sesión cerrada correctamente"
+                );
+                break;
+            case SESSION_EXPIRED:
+                JOptionPane.showMessageDialog(
+                    null, 
+                    "La sesión expiró"
+                );
+                break;
+            case UNAUTHORIZED:
+                JOptionPane.showMessageDialog(
+                    null, 
+                    "No autorizado"
+                );
+                break;
+        }
+        
+        openLogin();
+    }
+}
+```
+
+<Note>
+The Application class acts as a coordinator, managing frame lifecycles and ensuring proper cleanup when transitioning between states.
+</Note>
+
+## UI Frame Architecture
+
+Frames connect to controllers through constructor injection and event listeners.
+
+<CardGroup cols={2}>
+  <Card title="LoginFrame" icon="right-to-bracket">
+    Manages user authentication UI, connects to `LoginController` for credential validation.
+  </Card>
+  <Card title="MainFrame" icon="window-maximize">
+    Main application window, receives `Hl7Controller` to handle HL7 operations.
+  </Card>
+</CardGroup>
+
+### LoginFrame Connection Pattern
+
+```java LoginFrame.java
+public class LoginFrame extends JFrame {
+    private LoginController controller;
+
+    public LoginFrame(Application application) {
+        initComponents();
+        configureFrame();
+        // Controller injected after construction
+    }
+
+    public void setController(LoginController controller) {
+        this.controller = controller;
+    }
+
+    private Hl7Result<Void> doLogin() {
+        if (getEmail().isEmpty() || 
+            getPassword().length == 0 || 
+            getApiKey().isEmpty()) {
+            return Hl7Result.rejected(null, 
+                Hl7Error.functional(null, 
+                    "Email, password y API Key son obligatorios"
+                )
+            );
+        }
+
+        return controller.login(
+            getEmail(),
+            getPassword(),
+            getApiKey(),
+            getEnvironment()
+        );
+    }
+}
+```
+
+### MainFrame Connection Pattern
+
+```java MainFrame.java
+public class MainFrame extends JFrame {
+    private final Hl7Controller hl7Controller;
+
+    public MainFrame(Application application, Hl7Controller hl7Controller) {
+        this.hl7Controller = Objects.requireNonNull(hl7Controller);
+        initComponents();
+        configureFrame();
+        initActions();
+    }
+
+    private void initActions() {
+        eligibilityButton.addActionListener(e ->
+            openDialog(new ElegibilidadDialog(
+                this,
+                hl7Controller,
+                eligibilityButton.getText()
+            ))
+        );
+
+        registrationButton.addActionListener(e ->
+            openDialog(new RegistracionDialog(
+                this,
+                hl7Controller,
+                registrationButton.getText()
+            ))
+        );
+    }
+}
+```
+
+## Separation of Concerns
+
+The architecture enforces clear boundaries:
+
+| Layer | Responsibility | Dependencies |
+|-------|----------------|-------------|
+| **UI** | User interaction, display | Controllers only |
+| **Controller** | Coordinate flow, validation | Services, UI callbacks |
+| **Service** | Business logic, orchestration | Client, Models |
+| **Client** | HTTP communication | None (terminal layer) |
+| **Model** | Data structures, domain rules | None (pure domain) |
+
+<Info>
+This layered architecture ensures testability, maintainability, and clear dependency direction (downward only).
+</Info>
+
+## Key Design Patterns
+
+### Dependency Injection
+
+Components receive dependencies through constructors:
+
+```java
+// Application injects dependencies
+ApiClient apiClient = new ApiClient(authService);
+Hl7Service hl7Service = new Hl7Service(apiClient);
+Hl7Controller hl7Controller = new Hl7Controller(hl7Service);
+```
+
+### Observer Pattern
+
+Controllers use listeners for asynchronous notifications:
+
+```java
+controller.setLoginListener(new LoginController.LoginListener() {
+    @Override
+    public void onLoginSuccess() {
+        openMainFrame();
+    }
+});
+```
+
+### Result Pattern
+
+Operations return `Hl7Result<T>` instead of throwing exceptions:
+
+```java
+Hl7Result<ElegibilidadResponse> result = 
+    hl7Service.consultarElegibilidad(request);
+
+if (result.isOk()) {
+    ElegibilidadResponse response = result.getData();
+} else if (result.isRejected()) {
+    Hl7Error error = result.getError();
+}
+```
+
+## Configuration Management
+
+The `config` package provides centralized session and environment management:
+
+- **SessionContext**: Thread-safe singleton for current session state
+- **SessionRefreshManager**: Automatic token refresh scheduler
+- **EnvironmentConfig**: URL resolution based on environment (DEV, TEST, PROD)
+- **SessionEndReason**: Enumeration of session termination causes
+
+<Accordion title="Session Context Usage">
+```java
+// Initialize session after login
+SessionContext.initialize(
+    token,
+    expiration,
+    modelEspecifico,
+    environment,
+    device
+);
+
+// Check authentication status
+if (!SessionContext.isAuthenticated()) {
+    return Hl7Result.error(Hl7Error.sessionExpired());
+}
+
+// Access session data
+String token = SessionContext.getToken();
+Environment env = SessionContext.getEnvironment();
+
+// Clear session on logout
+SessionContext.clear();
+```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building" icon="hammer" href="/development/building">
+    Learn how to build and package the application
+  </Card>
+  <Card title="Dental Module" icon="tooth" href="/development/dental-module">
+    Explore the dental-specific business logic
+  </Card>
+</CardGroup>

@@ -1,0 +1,215 @@
+---
+title: "Environments"
+description: "Configure and manage environment-specific settings for HL7 connectivity"
+---
+
+## Overview
+
+The HL7 Connectivity Providers Client supports multiple deployment environments with isolated configurations. Each environment maintains its own base URL and API endpoints for authentication and HL7 operations.
+
+## Environment Types
+
+The `Environment` enum defines four deployment environments:
+
+```java Environment.java:3-8
+public enum Environment {
+    DEV,    // Development
+    QA,     // Quality Assurance
+    PRE,    // Pre-production
+    PRD     // Production
+}
+```
+
+### Environment Base URLs
+
+Each environment maps to a specific base URL configured in `application.properties`:
+
+| Environment | Base URL |
+|-------------|----------|
+| DEV | `https://mobileint.swissmedical.com.ar` |
+| QA | `https://mobileqa.swissmedical.com.ar` |
+| PRE | `https://mobilepre.swissmedical.com.ar` |
+| PRD | `https://mobile.swissmedical.com.ar` |
+
+<Note>
+Base URLs are loaded from `application.properties` at startup using the `PropertiesUtil` class.
+</Note>
+
+## Environment Configuration
+
+The `EnvironmentConfig` class provides static methods to retrieve environment-specific URLs.
+
+### Getting Base URL
+
+```java EnvironmentConfig.java:12-31
+public static String getBaseUrl(Environment env) {
+    String urlKey;
+    switch (env) {
+        case DEV:
+            urlKey = "env.base.url.dev";
+            break;
+        case QA:
+            urlKey = "env.base.url.qa";
+            break;
+        case PRE:
+            urlKey = "env.base.url.pre";
+            break;
+        case PRD:
+            urlKey = "env.base.url.prd";
+            break;
+        default:
+            throw new IllegalArgumentException("Entorno no soportado: " + env);
+    }
+    return PropertiesUtil.get(urlKey);
+}
+```
+
+## Authentication Endpoints
+
+### Login URL
+
+Constructs the authentication login endpoint for a specific environment:
+
+```java EnvironmentConfig.java:35-39
+public static String getAuthUrl(Environment env) {
+    return getBaseUrl(env)
+            + PropertiesUtil.get("api.context.path")
+            + "/v0/auth-login";
+}
+```
+
+**Example URL (PRD):** `https://mobile.swissmedical.com.ar/pre/api-smg/v0/auth-login`
+
+### Refresh Token URL
+
+Constructs the token refresh endpoint:
+
+```java EnvironmentConfig.java:41-45
+public static String getAuthRefreshUrl(Environment env) {
+    return getBaseUrl(env)
+            + PropertiesUtil.get("api.context.path")
+            + "/v0/auth-refresh";
+}
+```
+
+**Example URL (PRD):** `https://mobile.swissmedical.com.ar/pre/api-smg/v0/auth-refresh`
+
+## HL7 Endpoints
+
+### Eligibility Check
+
+```java EnvironmentConfig.java:49-55
+public static String getHl7ElegibilidadUrl(Environment env) {
+    return getBaseUrl(env)
+            + PropertiesUtil.get("api.context.path")
+            + PropertiesUtil.get("api.version.v3")
+            + PropertiesUtil.get("hl7.context.path")
+            + "/elegibilidad";
+}
+```
+
+**Example URL (PRD):** `https://mobile.swissmedical.com.ar/pre/api-smg/v3.0/prestadores/hl7/elegibilidad`
+
+### Patient Registration
+
+```java EnvironmentConfig.java:57-63
+public static String getHl7RegistracionUrl(Environment env) {
+    return getBaseUrl(env)
+            + PropertiesUtil.get("api.context.path")
+            + PropertiesUtil.get("api.version.v3")
+            + PropertiesUtil.get("hl7.context.path")
+            + "/registracion";
+}
+```
+
+**Example URL (PRD):** `https://mobile.swissmedical.com.ar/pre/api-smg/v3.0/prestadores/hl7/registracion`
+
+### Cancellation
+
+```java EnvironmentConfig.java:65-70
+public static String getHl7CancelacionUrl(Environment env) {
+    return getBaseUrl(env)
+            + PropertiesUtil.get("api.context.path")
+            + PropertiesUtil.get("api.version.v2")
+            + "/prestadores/hl7/cancela-prestacion";
+}
+```
+
+**Example URL (PRD):** `https://mobile.swissmedical.com.ar/pre/api-smg/v2.0/prestadores/hl7/cancela-prestacion`
+
+<Warning>
+Note that the cancellation endpoint uses API version v2.0, while eligibility and registration use v3.0.
+</Warning>
+
+## URL Construction Pattern
+
+All environment URLs follow a consistent construction pattern:
+
+```
+{base_url} + {api_context_path} + {version} + {specific_path}
+```
+
+### Configuration Properties
+
+From `application.properties`:
+
+```properties
+# API Context
+api.context.path=/pre/api-smg
+api.version.v3=/v3.0
+api.version.v2=/v2.0
+
+# HL7 Context
+hl7.context.path=/prestadores/hl7
+```
+
+## Usage in Login Flow
+
+<Tabs>
+  <Tab title="Environment Selection">
+    ```java
+    // User selects environment during login
+    Environment selectedEnv = Environment.PRD;
+    
+    // Get authentication URL for selected environment
+    String authUrl = EnvironmentConfig.getAuthUrl(selectedEnv);
+    
+    // Perform login request
+    AuthResponse response = httpClient.post(authUrl, loginRequest);
+    ```
+  </Tab>
+  
+  <Tab title="HL7 Request">
+    ```java
+    // Retrieve environment from session
+    Environment env = SessionContext.getEnvironment();
+    
+    // Get eligibility URL for current environment
+    String eligibilityUrl = EnvironmentConfig.getHl7ElegibilidadUrl(env);
+    
+    // Send HL7 message
+    Hl7Response response = httpClient.post(eligibilityUrl, hl7Message);
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Info>
+**Environment Selection:**
+- Store the selected environment in `SessionContext` during initialization
+- Use `SessionContext.getEnvironment()` to retrieve the current environment for API calls
+- Never hardcode environment URLs; always use `EnvironmentConfig` methods
+</Info>
+
+<Warning>
+**Production Safety:**
+- Validate environment selection before making API calls
+- Log environment information during session initialization
+- Ensure `application.properties` is properly configured for all environments
+</Warning>
+
+## Related Resources
+
+- [Session Management](/configuration/session-management) - Learn how environment is stored in session context
+- [Authentication](/features/authentication) - Authentication flow with environment selection

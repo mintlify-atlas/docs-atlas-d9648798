@@ -1,0 +1,914 @@
+---
+title: Dental Module
+description: Comprehensive guide to the dental-specific business logic, validation rules, and HL7 message formatting
+---
+
+## Overview
+
+The dental module (`com.hl7client.model.dental`) implements specialized business rules for dental benefit validation and HL7 message formatting. It encapsulates complex validation logic derived from stored procedures and clinical standards.
+
+## Package Structure
+
+```
+com.hl7client.model.dental/
+├── DentalBenefit.java              # Immutable dental benefit representation
+├── DentalRuleEngine.java           # Central validation engine
+├── DentalDataLoader.java           # CSV data initialization
+├── DentalHl7Formatter.java         # HL7 message formatting
+├── DentalPiece.java                # Tooth enumeration (FDI notation)
+├── DentalPieceType.java            # Tooth types (incisor, molar, etc.)
+├── DentalSurface.java              # Dental surfaces (V, O, D, M, L, I, P)
+├── DentalSurfaceMatrix.java        # Clinical validation rules
+├── DentalValidationResult.java     # Validation result wrapper
+├── DentalUiHints.java              # UI guidance hints
+└── enums/
+    └── AplicaType.java             # Benefit application types
+```
+
+## Core Components
+
+### DentalBenefit
+
+Immutable representation of a dental benefit with automatic HL7 formatting.
+
+```java DentalBenefit.java
+package com.hl7client.model.dental;
+
+public final class DentalBenefit implements BenefitItem {
+    private final int pieceNumber;              // -1 = none, 1-6 = sector, 11-85 = FDI piece
+    private final Set<DentalSurface> surfaces;  // Immutable set
+    private final String numericCode;           // Without "O" prefix (e.g., "020801")
+    private final String hl7Value;              // Cached HL7 string
+
+    public DentalBenefit(int pieceNumber, Set<DentalSurface> surfaces, String numericCode) {
+        // Strict validation
+        if (pieceNumber < -1 || (pieceNumber > 6 && pieceNumber < 11) || pieceNumber > 85) {
+            throw new IllegalArgumentException(
+                "pieceNumber inválido: -1 (ninguno), 1-6 (sector) o 11-85 (pieza FDI). Recibido: " + pieceNumber);
+        }
+
+        if (numericCode == null || numericCode.trim().isEmpty()) {
+            throw new IllegalArgumentException("benefitCode no puede ser nulo o vacío");
+        }
+        
+        String trimmed = numericCode.trim();
+        if (!trimmed.matches("\\d{3,8}")) {
+            throw new IllegalArgumentException(
+                "benefitCode debe tener 3-8 dígitos numéricos: " + trimmed);
+        }
+        
+        this.numericCode = trimmed;
+        this.surfaces = surfaces != null
+            ? Collections.unmodifiableSet(EnumSet.copyOf(surfaces))
+            : Collections.emptySet();
+        this.pieceNumber = pieceNumber;
+        
+        // Build and cache HL7 value
+        this.hl7Value = buildHl7Value();
+        
+        if (hl7Value.length() > Hl7Constants.MAX_LENGTH_ODONTOLOGIA) {
+            throw new IllegalArgumentException(
+                "Segmento HL7 excede límite de " + Hl7Constants.MAX_LENGTH_ODONTOLOGIA +
+                " caracteres (" + hl7Value.length() + "): " + hl7Value);
+        }
+    }
+
+    @Override
+    public String getValue() {
+        return hl7Value;
+    }
+
+    private String buildHl7Value() {
+        String pieceStr = (pieceNumber > 0) ? String.valueOf(pieceNumber) : "";
+        String surfacesCode = surfaces.stream()
+            .sorted(Comparator.comparingInt(DentalSurface::getPriority))
+            .map(DentalSurface::getCode)
+            .collect(Collectors.joining());
+
+        return String.format("%s^*%s*%s*%s*%s*%s%s",
+            Hl7Constants.DENTAL_TOTAL_COUNT,
+            pieceStr,
+            surfacesCode,
+            Hl7Constants.DENTAL_PREFIX + numericCode,
+            Hl7Constants.DENTAL_ORIGIN,
+            Hl7Constants.DENTAL_ITEM_QUANTITY,
+            Hl7Constants.DENTAL_SUFFIX
+        );
+    }
+}
+```
+
+<Info>
+**Immutability**: All fields are `final` and collections are wrapped with `Collections.unmodifiableSet()` to ensure thread-safety and prevent modification after construction.
+</Info>
+
+### DentalRuleEngine
+
+Central validation engine implementing stored procedure logic and clinical rules.
+
+<Accordion title="Complete Validation Logic">
+```java DentalRuleEngine.java
+package com.hl7client.model.dental;
+
+public final class DentalRuleEngine {
+    
+    private DentalRuleEngine() {
+        // Utility class - non-instantiable
+    }
+
+    public static ValidationResult validateAndBuild(
+            String codigoPrestacion, 
+            int pieza, 
+            Set<DentalSurface> surfaces
+    ) {
+        DentalDataLoader.loadAll();
+
+        // 1. Normalize and validate code
+        String codigo = normalizeCode(codigoPrestacion);
+        if (codigo.isEmpty()) {
+            return ValidationResult.error(919, 
+                "Código de prestación obligatorio", null);
+        }
+        if (!codigo.matches("\\d{3,8}")) {
+            return ValidationResult.error(919, 
+                "Código debe tener entre 3 y 8 dígitos numéricos", null);
+        }
+
+        // 2. Get procedure metadata
+        DentalDataLoader.ProcedureInfo info = 
+            DentalDataLoader.getProcedureInfo(codigo);
+        if (info == null) {
+            return ValidationResult.error(919, 
+                "Prestación no encontrada o no corresponde a odontología", null);
+        }
+
+        AplicaType aplica = AplicaType.fromCode(info.getAplica());
+        if (aplica == null) {
+            return ValidationResult.error(919, 
+                "Tipo 'aplica' inválido: " + info.getAplica(), null);
+        }
+
+        // 3. Validate piece/sector existence
+        boolean hasPieceOrSector = pieza > 0;
+        if (hasPieceOrSector && !DentalDataLoader.isNumeroValido(pieza)) {
+            return ValidationResult.error(920, 
+                "Pieza o sector no válido: " + pieza, null);
+        }
+
+        // 4. Main validations by 'aplica' type
+        boolean hasSurfaces = surfaces != null && !surfaces.isEmpty();
+        ValidationResult aplicaResult = 
+            validateByAplicaType(aplica, pieza, hasPieceOrSector, hasSurfaces);
+        if (aplicaResult.isNotValid()) {
+            return aplicaResult;
+        }
+
+        // 5. Validate min/max piece range
+        if (hasPieceOrSector) {
+            int min = info.getMinPiezas();
+            int max = info.getMaxPiezas();
+            if (min > 0 && pieza < min) {
+                return ValidationResult.error(925, 
+                    "Número de pieza inferior al mínimo requerido (" + min + ")", null);
+            }
+            if (max > 0 && pieza > max) {
+                return ValidationResult.error(925, 
+                    "Número de pieza superior al máximo permitido (" + max + ")", null);
+            }
+        }
+
+        // 6. Normalize and validate surfaces (no duplicates)
+        Set<Character> selectedCaras = new LinkedHashSet<>();
+        if (hasSurfaces) {
+            for (DentalSurface s : surfaces) {
+                char c = Character.toUpperCase(s.getCode().charAt(0));
+                if (!selectedCaras.add(c)) {
+                    return ValidationResult.error(198, 
+                        "Cara repetida no permitida: " + c, String.valueOf(c));
+                }
+            }
+        }
+
+        // 7. Allowed surfaces by piece (from tr_pieza_x_cara)
+        if (hasSurfaces && (aplica == AplicaType.C || aplica == AplicaType.O)) {
+            if (pieza < 11) {
+                return ValidationResult.error(199, 
+                    "No se permiten caras sin pieza FDI válida", null);
+            }
+            Set<Character> permitidas = DentalDataLoader.getCarasPermitidas(pieza);
+            for (char c : selectedCaras) {
+                if (!permitidas.contains(c)) {
+                    return ValidationResult.error(199, 
+                        "Cara no válida para la pieza " + pieza + ": " + c, 
+                        String.valueOf(c));
+                }
+            }
+        }
+
+        // 8. Clinical validation (DentalSurfaceMatrix)
+        if (pieza >= 11 && hasSurfaces) {
+            DentalPiece pieceObj = DentalToothService.fromFdiOrNull(pieza);
+            if (pieceObj == null) {
+                return ValidationResult.error(920, 
+                    "Pieza FDI no reconocida clínicamente: " + pieza, null);
+            }
+            DentalValidationResult clinical = 
+                DentalSurfaceMatrix.validate(pieceObj, surfaces);
+            if (clinical.hasErrors()) {
+                return ValidationResult.error(999, 
+                    "Combinación de superficies no válida clínicamente: " + 
+                    clinical.getMessage(), null);
+            }
+        }
+
+        // All OK - build benefit
+        DentalBenefit benefit = new DentalBenefit(pieza, surfaces, codigo);
+        return ValidationResult.ok(benefit);
+    }
+
+    private static ValidationResult validateByAplicaType(
+            AplicaType aplica, 
+            int pieza, 
+            boolean hasPieceOrSector, 
+            boolean hasSurfaces
+    ) {
+        switch (aplica) {
+            case S:  // Sector
+                if (!hasPieceOrSector || pieza < 1 || pieza > 6) {
+                    return ValidationResult.error(921, 
+                        "Prestación aplica a sector y no se ingresó sector válido (1-6)", 
+                        null);
+                }
+                break;
+
+            case P:  // Piece
+                if (!hasPieceOrSector || pieza < 11) {
+                    return ValidationResult.error(922, 
+                        "Prestación aplica a pieza y no se ingresó pieza válida (11-85)", 
+                        null);
+                }
+                if (hasSurfaces) {
+                    return ValidationResult.error(1314, 
+                        "Prestación no permite caras", null);
+                }
+                break;
+
+            case O:  // Optional
+                if (hasPieceOrSector && pieza <= 6) {
+                    return ValidationResult.error(923, 
+                        "Prestación no permite sector", null);
+                }
+                break;
+
+            case C:  // Cara (surface)
+                if (!hasPieceOrSector || pieza < 11) {
+                    return ValidationResult.error(924, 
+                        "Prestación requiere pieza dental válida (11-85)", null);
+                }
+                if (!hasSurfaces) {
+                    return ValidationResult.error(924, 
+                        "Prestación requiere al menos una cara", null);
+                }
+                break;
+
+            case G:  // General
+                if (hasPieceOrSector || hasSurfaces) {
+                    return ValidationResult.error(1315, 
+                        "Prestación general no permite pieza ni caras", null);
+                }
+                break;
+
+            case N:  // No restrictions
+                break;
+
+            default:
+                return ValidationResult.error(919, 
+                    "Tipo 'aplica' no soportado: " + aplica.getCode(), null);
+        }
+        return ValidationResult.ok(null);
+    }
+}
+```
+</Accordion>
+
+<Note>
+The validation logic aligns with the stored procedure `trs_valida_pieza_cara` while adding clinical validation through `DentalSurfaceMatrix`.
+</Note>
+
+### DentalDataLoader
+
+Thread-safe lazy loader for CSV dental data.
+
+```java DentalDataLoader.java
+package com.hl7client.model.dental;
+
+public final class DentalDataLoader {
+    private static final Logger LOGGER = 
+        Logger.getLogger(DentalDataLoader.class.getName());
+    
+    private static volatile boolean loaded = false;
+    
+    // Data structures (read-only public access via getters)
+    private static final Map<String, ProcedureInfo> PRESTACION_TO_INFO = new HashMap<>();
+    private static final Map<Integer, Set<Character>> PIEZA_TO_CARAS = new HashMap<>();
+    private static final Map<Integer, String> NUMERO_TO_TIPO = new HashMap<>();
+    
+    // CSV resource paths
+    private static final String PATH_PRESTACIONES   = 
+        "/data/odon_prestac_202602251256.csv";
+    private static final String PATH_PIEZA_X_CARA    = 
+        "/data/tr_pieza_x_cara_202602211311.csv";
+    private static final String PATH_PIEZAS_SECTORES = 
+        "/data/tr_piezas_y_sectores_202602211311.csv";
+
+    private DentalDataLoader() {
+        // Utility class - non-instantiable
+    }
+
+    public static void loadAll() {
+        if (loaded) {
+            return;
+        }
+
+        synchronized (DentalDataLoader.class) {
+            if (loaded) {
+                return; // double-checked locking
+            }
+
+            LOGGER.info("Iniciando carga de datos odontológicos desde CSVs...");
+
+            try {
+                loadPiezasYSectores();
+                loadPiezasYCaras();
+                loadPrestaciones();
+
+                loaded = true;
+
+                LOGGER.info(String.format(
+                    "Carga completada exitosamente:%n" +
+                    "  - Prestaciones (nomen=15): %d%n" +
+                    "  - Piezas con caras definidas: %d%n" +
+                    "  - Números con tipo (S/P): %d",
+                    PRESTACION_TO_INFO.size(),
+                    PIEZA_TO_CARAS.size(),
+                    NUMERO_TO_TIPO.size()
+                ));
+
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, 
+                    "ERROR CRÍTICO al cargar datos odontológicos", e);
+                loadPrestacionesFallback();
+                loaded = true;
+            }
+        }
+    }
+
+    public static ProcedureInfo getProcedureInfo(String prestacion) {
+        ensureLoaded();
+        String key = (prestacion != null) ? 
+            prestacion.trim().toUpperCase(Locale.ROOT) : "";
+        if (key.startsWith("O")) key = key.substring(1);
+        return PRESTACION_TO_INFO.get(key);
+    }
+
+    public static Set<Character> getCarasPermitidas(int pieza) {
+        ensureLoaded();
+        return Collections.unmodifiableSet(
+            PIEZA_TO_CARAS.getOrDefault(pieza, Collections.emptySet())
+        );
+    }
+
+    public static boolean isNumeroValido(int numero) {
+        ensureLoaded();
+        return NUMERO_TO_TIPO.containsKey(numero);
+    }
+
+    public static final class ProcedureInfo {
+        private final String aplica;
+        private final int minPiezas;
+        private final int maxPiezas;
+
+        public ProcedureInfo(String aplica, int minPiezas, int maxPiezas) {
+            this.aplica = (aplica != null) ? 
+                aplica.toUpperCase(Locale.ROOT) : "X";
+            this.minPiezas = Math.max(0, minPiezas);
+            this.maxPiezas = Math.max(0, maxPiezas);
+        }
+
+        public String getAplica() { return aplica; }
+        public int getMinPiezas() { return minPiezas; }
+        public int getMaxPiezas() { return maxPiezas; }
+    }
+}
+```
+
+<Info>
+**Initialization Strategy**: Uses double-checked locking for thread-safe lazy initialization. Data is loaded once on first access and cached for the application lifetime.
+</Info>
+
+## Domain Models
+
+### DentalPiece
+
+Enumeration of all permanent teeth using FDI notation.
+
+```java DentalPiece.java
+package com.hl7client.model.dental;
+
+public enum DentalPiece {
+    // Upper right quadrant (1x)
+    P11(INCISIVO), P12(INCISIVO),
+    P13(CANINO),
+    P14(PREMOLAR), P15(PREMOLAR),
+    P16(MOLAR), P17(MOLAR), P18(MOLAR),
+
+    // Upper left quadrant (2x)
+    P21(INCISIVO), P22(INCISIVO),
+    P23(CANINO),
+    P24(PREMOLAR), P25(PREMOLAR),
+    P26(MOLAR), P27(MOLAR), P28(MOLAR),
+
+    // Lower left quadrant (3x)
+    P31(INCISIVO), P32(INCISIVO),
+    P33(CANINO),
+    P34(PREMOLAR), P35(PREMOLAR),
+    P36(MOLAR), P37(MOLAR), P38(MOLAR),
+
+    // Lower right quadrant (4x)
+    P41(INCISIVO), P42(INCISIVO),
+    P43(CANINO),
+    P44(PREMOLAR), P45(PREMOLAR),
+    P46(MOLAR), P47(MOLAR), P48(MOLAR);
+
+    private final DentalPieceType type;
+
+    DentalPiece(DentalPieceType type) {
+        this.type = type;
+    }
+
+    public DentalPieceType getType() {
+        return type;
+    }
+
+    public String getFdiCode() {
+        return name().substring(1);  // "P11" -> "11"
+    }
+
+    public static DentalPiece fromFdi(int fdi) {
+        String key = "P" + fdi;
+        try {
+            return DentalPiece.valueOf(key);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(
+                "Código FDI inválido o no soportado: " + fdi, ex
+            );
+        }
+    }
+}
+```
+
+<CardGroup cols={4}>
+  <Card title="Quadrant 1" icon="1">
+    Upper right (11-18)
+  </Card>
+  <Card title="Quadrant 2" icon="2">
+    Upper left (21-28)
+  </Card>
+  <Card title="Quadrant 3" icon="3">
+    Lower left (31-38)
+  </Card>
+  <Card title="Quadrant 4" icon="4">
+    Lower right (41-48)
+  </Card>
+</CardGroup>
+
+### DentalSurface
+
+Dental surfaces with priority ordering for HL7 concatenation.
+
+```java DentalSurface.java
+package com.hl7client.model.dental;
+
+public enum DentalSurface {
+    VESTIBULAR  ("V", 0),  // Highest priority (appears first)
+    OCCLUSAL    ("O", 1),
+    DISTAL      ("D", 2),
+    MESIAL      ("M", 3),
+    LINGUAL     ("L", 4),
+    INCISAL     ("I", 5),
+    PALATAL     ("P", 6);
+
+    private final String code;
+    private final int priority;
+
+    DentalSurface(String code, int priority) {
+        this.code = code;
+        this.priority = priority;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public int getPriority() {
+        return priority;
+    }
+
+    public static DentalSurface fromCode(String code) {
+        if (code == null || code.isEmpty()) {
+            return null;
+        }
+        for (DentalSurface surface : values()) {
+            if (surface.code.equals(code)) {
+                return surface;
+            }
+        }
+        return null;
+    }
+
+    public static Set<DentalSurface> fromCodes(String codes) {
+        Set<DentalSurface> result = EnumSet.noneOf(DentalSurface.class);
+        if (codes == null || codes.isEmpty()) {
+            return result;
+        }
+        for (char c : codes.toCharArray()) {
+            DentalSurface surface = fromCode(String.valueOf(c));
+            if (surface != null) {
+                result.add(surface);
+            }
+        }
+        return result;
+    }
+}
+```
+
+### DentalSurfaceMatrix
+
+Clinical validation rules for surface combinations.
+
+```java DentalSurfaceMatrix.java
+package com.hl7client.model.dental;
+
+public final class DentalSurfaceMatrix {
+    
+    // Allowed surfaces by tooth group
+    private static final Set<DentalSurface> ANTERIORES = EnumSet.of(
+        DentalSurface.MESIAL,
+        DentalSurface.DISTAL,
+        DentalSurface.VESTIBULAR,
+        DentalSurface.LINGUAL,
+        DentalSurface.INCISAL,
+        DentalSurface.PALATAL
+    );
+
+    private static final Set<DentalSurface> POSTERIORES = EnumSet.of(
+        DentalSurface.MESIAL,
+        DentalSurface.DISTAL,
+        DentalSurface.VESTIBULAR,
+        DentalSurface.LINGUAL,
+        DentalSurface.OCCLUSAL,
+        DentalSurface.PALATAL
+    );
+
+    private static final int MAX_SURFACES_ALLOWED = 3;
+    private static final Set<DentalSurface> MUTUALLY_EXCLUSIVE = EnumSet.of(
+        DentalSurface.OCCLUSAL,
+        DentalSurface.INCISAL
+    );
+
+    public static Set<DentalSurface> getAllowedSurfacesFor(DentalPiece piece) {
+        if (piece == null) {
+            return EnumSet.noneOf(DentalSurface.class);
+        }
+
+        DentalPieceType type = piece.getType();
+
+        switch (type) {
+            case INCISIVO:
+            case CANINO:
+                return ANTERIORES;
+            case PREMOLAR:
+            case MOLAR:
+                return POSTERIORES;
+            default:
+                return EnumSet.noneOf(DentalSurface.class);
+        }
+    }
+
+    public static DentalValidationResult validate(
+            DentalPiece piece,
+            Set<DentalSurface> selectedSurfaces
+    ) {
+        if (selectedSurfaces == null) {
+            selectedSurfaces = EnumSet.noneOf(DentalSurface.class);
+        }
+
+        List<String> errors = new ArrayList<>();
+
+        // Rule 1: No surfaces without piece
+        if (piece == null) {
+            if (!selectedSurfaces.isEmpty()) {
+                errors.add(
+                    "No se pueden seleccionar superficies sin elegir una pieza dental."
+                );
+            }
+            return buildResult(errors);
+        }
+
+        // Rule 2: Allowed surfaces by tooth type
+        Set<DentalSurface> allowed = getAllowedSurfacesFor(piece);
+        for (DentalSurface surface : selectedSurfaces) {
+            if (!allowed.contains(surface)) {
+                errors.add(String.format(
+                    "La superficie %s (%s) no está permitida en la pieza %s (%s)",
+                    surface.name(), surface.getCode(),
+                    piece.getFdiCode(), piece.getType().name().toLowerCase()
+                ));
+            }
+        }
+
+        // Rule 3: Maximum surfaces limit
+        if (selectedSurfaces.size() > MAX_SURFACES_ALLOWED) {
+            errors.add(String.format(
+                "Máximo permitido: %d superficies por prestación (seleccionadas: %d)",
+                MAX_SURFACES_ALLOWED, selectedSurfaces.size()
+            ));
+        }
+
+        // Rule 4: Mutually exclusive surfaces
+        if (selectedSurfaces.containsAll(MUTUALLY_EXCLUSIVE)) {
+            errors.add(
+                "No se puede combinar Oclusal (O) e Incisal (I) en la misma prestación."
+            );
+        }
+
+        return buildResult(errors);
+    }
+
+    private static DentalValidationResult buildResult(List<String> errors) {
+        return errors.isEmpty()
+            ? DentalValidationResult.ok()
+            : DentalValidationResult.errors(errors);
+    }
+}
+```
+
+<Accordion title="Clinical Validation Rules Summary">
+**Implemented Rules:**
+
+1. **Anterior teeth** (incisors, canines): Allow M, D, V, L, I, P
+2. **Posterior teeth** (premolars, molars): Allow M, D, V, L, O, P
+3. **Maximum 3 surfaces** per benefit
+4. **Cannot combine** Occlusal (O) and Incisal (I)
+5. **No surfaces** allowed without selecting a piece
+</Accordion>
+
+## HL7 Message Formatting
+
+### DentalHl7Formatter
+
+Centralized HL7 string formatting for dental benefits.
+
+```java DentalHl7Formatter.java
+package com.hl7client.model.dental;
+
+public final class DentalHl7Formatter {
+    
+    private DentalHl7Formatter() {
+        // Utility class
+    }
+
+    public static String format(
+            int pieceNumber, 
+            Set<DentalSurface> surfaces, 
+            String numericCode
+    ) {
+        if (numericCode == null || numericCode.trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                "Código numérico es obligatorio"
+            );
+        }
+        
+        String code = numericCode.trim();
+        if (!code.matches("\\d{3,8}")) {
+            throw new IllegalArgumentException(
+                "Código debe tener 3-8 dígitos: " + code
+            );
+        }
+
+        String pieceStr = (pieceNumber > 0) ? String.valueOf(pieceNumber) : "";
+        String surfacesStr = surfaces.stream()
+            .sorted(Comparator.comparingInt(DentalSurface::getPriority))
+            .map(DentalSurface::getCode)
+            .collect(Collectors.joining());
+
+        return getHl7(pieceStr, surfacesStr, code);
+    }
+
+    private static String getHl7(String pieceStr, String surfacesStr, String code) {
+        String hl7 = String.format("%s^*%s*%s*%s*%s*%s%s",
+            Hl7Constants.DENTAL_TOTAL_COUNT,
+            pieceStr,
+            surfacesStr,
+            Hl7Constants.DENTAL_PREFIX + code,
+            Hl7Constants.DENTAL_ORIGIN,
+            Hl7Constants.DENTAL_ITEM_QUANTITY,
+            Hl7Constants.DENTAL_SUFFIX
+        );
+
+        if (hl7.length() > Hl7Constants.MAX_LENGTH_ODONTOLOGIA) {
+            throw new IllegalArgumentException(
+                "Segmento HL7 excede límite de " + 
+                Hl7Constants.MAX_LENGTH_ODONTOLOGIA +
+                " caracteres (" + hl7.length() + "): " + hl7
+            );
+        }
+        return hl7;
+    }
+}
+```
+
+### HL7 Format Structure
+
+```
+1^*pieza*caras*Ocodigo*P*1**
+│  │     │     │       │ │ │
+│  │     │     │       │ │ └─ Suffix (empty)
+│  │     │     │       │ └─── Quantity: "1"
+│  │     │     │       └───── Origin: "P"
+│  │     │     └───────────── Code: "O" + numeric code
+│  │     └─────────────────── Surfaces: "VML" (sorted by priority)
+│  └───────────────────────── Piece: FDI number or empty
+└──────────────────────────── Total count: "1"
+```
+
+**Examples:**
+
+```
+1^*35*V*O020801*P*1**              // Piece 35, surface V, code 020801
+1^*26*VDM*O020802*P*1**            // Piece 26, surfaces VDM, code 020802
+1^**O040201*P*1**                  // No piece, no surfaces, code 040201
+1^*3*O0301*P*1**                   // Sector 3, code 0301
+```
+
+## BenefitItem Hierarchy
+
+Dental benefits implement the `BenefitItem` interface for polymorphic handling.
+
+```java BenefitItem.java
+package com.hl7client.model.benefit;
+
+public interface BenefitItem {
+    int getOrden();
+    int length();
+    String getValue();
+}
+```
+
+### MedicalBenefitItem
+
+Medical benefits use a different format:
+
+```java MedicalBenefitItem.java
+package com.hl7client.model.benefit;
+
+public final class MedicalBenefitItem implements BenefitItem {
+    private final int quantityPerType;  // 1-99
+    private final String benefitCode;   // 3-8 characters
+    private final String value;         // HL7 serialized
+
+    private MedicalBenefitItem(int quantityPerType, String benefitCode) {
+        if (quantityPerType < 1 || quantityPerType > 99) {
+            throw new IllegalArgumentException(
+                "La cantidad por tipo debe estar entre 1 y 99"
+            );
+        }
+        
+        String trimmed = benefitCode.trim();
+        int len = trimmed.length();
+        if (len < 3 || len > 8) {
+            throw new IllegalArgumentException(
+                "El código de prestación debe tener entre 3 y 8 caracteres (actual: " + 
+                len + ")"
+            );
+        }
+
+        this.quantityPerType = quantityPerType;
+        this.benefitCode = trimmed;
+        this.value = quantityPerType + "^*" + trimmed + "*" + quantityPerType + "**";
+    }
+
+    public static MedicalBenefitItem of(int quantityPerType, String benefitCode) {
+        return new MedicalBenefitItem(quantityPerType, benefitCode);
+    }
+
+    @Override
+    public String getValue() {
+        return value;
+    }
+}
+```
+
+**Medical Format:**
+
+```
+7^*654321*7**                       // Quantity 7, code "654321"
+3^*ABC123*3**                       // Quantity 3, code "ABC123"
+```
+
+## Usage Examples
+
+### Validating and Creating Dental Benefits
+
+```java
+// Initialize data (once per application)
+DentalDataLoader.loadAll();
+
+// Validate dental benefit
+Set<DentalSurface> surfaces = EnumSet.of(
+    DentalSurface.VESTIBULAR,
+    DentalSurface.MESIAL
+);
+
+DentalRuleEngine.ValidationResult result = 
+    DentalRuleEngine.validateAndBuild("020801", 35, surfaces);
+
+if (result.isValid()) {
+    DentalBenefit benefit = result.getBenefit();
+    String hl7 = benefit.getValue();
+    // "1^*35*VM*O020801*P*1**"
+} else {
+    System.err.println("Validation error: " + result.getMessage());
+    System.err.println("Error code: " + result.getRechaCode());
+}
+```
+
+### Getting UI Hints
+
+```java
+// Get hints for procedure code (before selecting piece)
+DentalUiHints hints = DentalRuleEngine.getUiHints("020801");
+
+if (hints.isRequireSurfaces()) {
+    // Enable surface selection UI
+}
+
+if (hints.isAllowPiece()) {
+    // Enable piece picker
+}
+
+// Get hints with piece selected (includes allowed surfaces)
+DentalUiHints detailedHints = DentalRuleEngine.getUiHints("020801", 35);
+
+Set<DentalSurface> allowedSurfaces = detailedHints.getAllowedSurfaces();
+// Only enable checkboxes for surfaces in allowedSurfaces
+```
+
+### Clinical Validation
+
+```java
+DentalPiece piece = DentalPiece.fromFdi(16);  // Upper right first molar
+Set<DentalSurface> surfaces = EnumSet.of(
+    DentalSurface.OCCLUSAL,
+    DentalSurface.INCISAL  // Invalid for molar!
+);
+
+DentalValidationResult clinicalResult = 
+    DentalSurfaceMatrix.validate(piece, surfaces);
+
+if (clinicalResult.hasErrors()) {
+    for (String error : clinicalResult.getErrors()) {
+        System.err.println(error);
+    }
+    // "La superficie INCISAL (I) no está permitida en la pieza 16 (molar)"
+    // "No se puede combinar Oclusal (O) e Incisal (I) en la misma prestación."
+}
+```
+
+## Error Codes Reference
+
+| Code | Description |
+|------|-------------|
+| 919 | Invalid or missing procedure code |
+| 920 | Invalid piece or sector number |
+| 921 | Sector required but not provided (1-6) |
+| 922 | Piece required but not provided (11-85) |
+| 923 | Procedure does not allow sector |
+| 924 | Piece and surfaces required |
+| 925 | Piece number outside allowed range |
+| 198 | Duplicate surface not allowed |
+| 199 | Surface not valid for selected piece |
+| 999 | Clinical validation failure |
+| 1314 | Procedure does not allow surfaces |
+| 1315 | General procedure - no piece or surfaces allowed |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Review overall application architecture
+  </Card>
+  <Card title="Building" icon="hammer" href="/development/building">
+    Learn how to build and package the application
+  </Card>
+</CardGroup>
