@@ -1,0 +1,105 @@
+{
+  "projectType": "saas",
+  "projectName": "HL7 Connectivity Providers Client",
+  "projectDescription": "A Java desktop client for healthcare provider connectivity via HL7 messaging, supporting eligibility verification, service registration, and cancellations.",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/eligibility",
+              "features/registration",
+              "features/cancellation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environments",
+              "configuration/session-management"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/architecture",
+              "development/building",
+              "development/dental-module"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Services",
+            "pages": [
+              "api/auth-service",
+              "api/hl7-service",
+              "api/api-client"
+            ]
+          },
+          {
+            "group": "HL7 Operations",
+            "pages": [
+              "api/eligibility-operations",
+              "api/registration-operations",
+              "api/cancellation-operations"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "api/request-models",
+              "api/response-models",
+              "api/result-types"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "HL7 eligibility verification for medical and dental services",
+    "Service registration with detailed item tracking",
+    "Cancellation management with error handling",
+    "Automatic session refresh and token management",
+    "Multi-environment support (dev, staging, production)",
+    "Comprehensive dental benefit calculation engine",
+    "Modern FlatLaf UI with customizable themes"
+  ],
+  "publicApiSurface": [
+    "AuthService.login()",
+    "AuthService.logout()",
+    "AuthService.refreshAuth()",
+    "Hl7Service.consultarElegibilidad()",
+    "Hl7Service.consultarRegistracion()",
+    "Hl7Service.cancelarPrestacion()",
+    "ApiClient.post()",
+    "Hl7Controller.consultarElegibilidad()",
+    "Hl7Controller.consultarRegistracion()",
+    "Hl7Controller.consultarCancelacion()",
+    "SessionContext.initialize()",
+    "SessionContext.isAuthenticated()",
+    "SessionRefreshManager.ensureStarted()",
+    "DentalRuleEngine (validation logic)",
+    "ThemeManager.initialize()"
+  ]
+}
