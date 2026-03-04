@@ -75,7 +75,7 @@ Authenticates a user with the HL7 Connectivity Providers service.
 </ParamField>
 
 <ParamField path="environment" type="Environment" required>
-  Target environment (DEVELOPMENT, QA, or PRODUCTION)
+  Target environment (DEV, QA, PRE, or PRD)
 </ParamField>
 
 **Behavior:**
@@ -106,7 +106,7 @@ try {
         "user@example.com",
         "password".toCharArray(),
         "your-api-key",
-        Environment.PRODUCTION
+        Environment.PRD
     );
     System.out.println("Login successful");
 } catch (RuntimeException e) {

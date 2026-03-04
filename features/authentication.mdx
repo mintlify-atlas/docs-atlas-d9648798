@@ -36,7 +36,7 @@ public void login(
 </ParamField>
 
 <ParamField path="environment" type="Environment" required>
-  Target environment (SANDBOX or PRODUCTION)
+  Target environment (DEV, QA, PRE, or PRD)
 </ParamField>
 
 ### Device Request Creation
@@ -411,13 +411,15 @@ public class AuthenticationExample {
 <Accordion title="Environment Configuration">
   Always use the appropriate environment:
   
-  - `Environment.SANDBOX` - Testing and development
-  - `Environment.PRODUCTION` - Live operations
+  - `Environment.DEV` - Development
+  - `Environment.QA` - Quality assurance testing
+  - `Environment.PRE` - Pre-production staging
+  - `Environment.PRD` - Live production operations
   
   ```java
   Environment env = isProduction() 
-      ? Environment.PRODUCTION 
-      : Environment.SANDBOX;
+      ? Environment.PRD 
+      : Environment.DEV;
   ```
 </Accordion>
 
